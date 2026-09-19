@@ -221,7 +221,7 @@ fun PlayerScreen(
     DisposableEffect(holdForSpeedHandler) {
         onDispose {
             holdForSpeedHandler.cancel { speed ->
-                viewModel.onEvent(PlayerEvent.OnSetPlaybackSpeed(speed))
+                viewModel.onEvent(PlayerEvent.OnSetPlaybackSpeed(speed, persist = false))
             }
         }
     }
@@ -825,7 +825,7 @@ fun PlayerScreen(
                         },
                         onSpeedChange = { speed ->
                             viewModel.onEvent(
-                                PlayerEvent.OnSetPlaybackSpeed(speed)
+                                PlayerEvent.OnSetPlaybackSpeed(speed, persist = false)
                             )
                         },
                     )
