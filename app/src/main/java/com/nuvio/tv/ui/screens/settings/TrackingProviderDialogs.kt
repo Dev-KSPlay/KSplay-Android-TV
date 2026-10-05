@@ -670,6 +670,9 @@ private fun TrackingConnectedWordmark(
                 .width(124.dp)
                 .height(30.dp)
             TrackingDialogBrand.MDBLIST -> Modifier.size(40.dp)
+            TrackingDialogBrand.WETRAKR -> Modifier
+                .width(138.dp)
+                .height(30.dp)
         },
         contentScale = ContentScale.Fit,
         alignment = Alignment.CenterStart
@@ -825,7 +828,8 @@ private fun TrackingProviderWordmark(
 internal enum class TrackingDialogBrand {
     TRAKT,
     SIMKL,
-    MDBLIST
+    MDBLIST,
+    WETRAKR
 }
 
 private fun TrackingDialogBrand.cardBrush(): Brush = when (this) {
@@ -837,6 +841,9 @@ private fun TrackingDialogBrand.cardBrush(): Brush = when (this) {
     )
     TrackingDialogBrand.MDBLIST -> Brush.linearGradient(
         colors = listOf(Color(0xFF173D69), Color(0xFF225C97), Color(0xFF16385D))
+    )
+    TrackingDialogBrand.WETRAKR -> Brush.linearGradient(
+        colors = listOf(Color(0xFF13161D), Color(0xFF676BFF), Color(0xFF13161D))
     )
 }
 
