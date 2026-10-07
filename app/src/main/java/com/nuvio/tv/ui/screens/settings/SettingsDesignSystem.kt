@@ -978,7 +978,11 @@ internal fun <T> SettingsSingleChoiceDialog(
                         onClick = { onOptionSelected(option.value) },
                         modifier = Modifier
                             .fillMaxWidth()
-                            .then(if (index == focusedIndex) Modifier.focusRequester(focusRequester) else Modifier),
+                            .then(if (index == focusedIndex) Modifier.focusRequester(focusRequester) else Modifier)
+                            .semantics {
+                                role = Role.RadioButton
+                                this.selected = isSelected
+                            },
                         colors = CardDefaults.colors(
                             containerColor = if (isSelected) NuvioTheme.colors.FocusBackground else NuvioTheme.colors.BackgroundCard,
                             focusedContainerColor = NuvioTheme.colors.FocusBackground
@@ -1020,7 +1024,7 @@ internal fun <T> SettingsSingleChoiceDialog(
                                 Spacer(modifier = Modifier.width(NuvioTheme.spacing.md))
                                 Icon(
                                     imageVector = Icons.Default.Check,
-                                    contentDescription = stringResource(R.string.cd_selected),
+                                    contentDescription = null,
                                     tint = NuvioTheme.colors.Primary,
                                     modifier = Modifier.size(20.dp)
                                 )
@@ -1093,7 +1097,11 @@ internal fun <T> SettingsMultiChoiceDialog(
                             },
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .then(if (index == firstSelectedIndex) Modifier.focusRequester(focusRequester) else Modifier),
+                                .then(if (index == firstSelectedIndex) Modifier.focusRequester(focusRequester) else Modifier)
+                                .semantics {
+                                    role = Role.Checkbox
+                                    toggleableState = if (isSelected) ToggleableState.On else ToggleableState.Off
+                                },
                             colors = CardDefaults.colors(
                                 containerColor = if (isSelected) NuvioTheme.colors.FocusBackground else NuvioTheme.colors.BackgroundCard,
                                 focusedContainerColor = NuvioTheme.colors.FocusBackground
@@ -1127,7 +1135,7 @@ internal fun <T> SettingsMultiChoiceDialog(
                                     Spacer(modifier = Modifier.width(NuvioTheme.spacing.md))
                                     Icon(
                                         imageVector = Icons.Default.Check,
-                                        contentDescription = stringResource(R.string.cd_selected),
+                                        contentDescription = null,
                                         tint = NuvioTheme.colors.Primary,
                                         modifier = Modifier.size(20.dp)
                                     )
@@ -1194,7 +1202,8 @@ internal fun SettingsChoiceChip(
     selected: Boolean,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
-    onFocused: () -> Unit = {}
+    onFocused: () -> Unit = {},
+    multiSelect: Boolean = false
 ) {
     var isFocused by remember { mutableStateOf(false) }
     val zen = isFlatSettingsStyle()
@@ -1206,6 +1215,14 @@ internal fun SettingsChoiceChip(
             if (isFocused != nowFocused) {
                 isFocused = nowFocused
                 if (nowFocused) onFocused()
+            }
+        }.semantics {
+            if (multiSelect) {
+                role = Role.Checkbox
+                toggleableState = if (selected) ToggleableState.On else ToggleableState.Off
+            } else {
+                role = Role.RadioButton
+                this.selected = selected
             }
         },
         colors = CardDefaults.colors(
