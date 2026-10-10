@@ -1483,7 +1483,7 @@ private fun ScraperCard(
 }
 
 @Composable
-private fun ScraperSettingsDialog(
+internal fun ScraperSettingsDialog(
     scraperName: String,
     layoutJson: String,
     initialSettings: Map<String, Any>,
