@@ -1,39 +1,50 @@
 package com.nuvio.tv.ui.components
 
 import android.view.KeyEvent as AndroidKeyEvent
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.border
+import androidx.compose.foundation.background
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.requiredWidth
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.key
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.tween
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.input.key.onPreviewKeyEvent
@@ -42,7 +53,11 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextDirection
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import com.nuvio.tv.ui.util.contentTextDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import com.nuvio.tv.R
@@ -50,20 +65,27 @@ import androidx.tv.material3.Border
 import androidx.tv.material3.Card
 import androidx.tv.material3.CardDefaults
 import androidx.tv.material3.ExperimentalTvMaterial3Api
-import androidx.tv.material3.Icon
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
+import com.nuvio.tv.domain.model.ContentType
+import com.nuvio.tv.domain.model.CardDepthSurface
 import com.nuvio.tv.domain.model.MetaPreview
 import com.nuvio.tv.domain.model.PosterShape
-import com.nuvio.tv.ui.theme.NuvioColors
 import com.nuvio.tv.ui.theme.NuvioTheme
-import coil.compose.AsyncImage
-import coil.request.ImageRequest
+import coil3.compose.AsyncImage
+import coil3.request.ImageRequest
+import coil3.request.CachePolicy
+import coil3.request.crossfade
+import com.nuvio.tv.ui.util.localizedGenreLabel
+import com.nuvio.tv.ui.util.recompositionHighlighter
+import com.nuvio.tv.domain.model.PLACEHOLDER_IMAGE_URL
+import com.nuvio.tv.ui.util.rememberLongPressKeyTracker
 import kotlinx.coroutines.delay
 
 private const val BACKDROP_ASPECT_RATIO = 16f / 9f
 private const val TRAILER_PREVIEW_REQUEST_FOCUS_DEBOUNCE_MS = 140L
 private val YEAR_REGEX = Regex("""\b(19|20)\d{2}\b""")
+private val YEAR_RANGE_REGEX = Regex("""^((19|20)\d{2})\s*[-–]\s*((19|20)\d{2})?$""")
 
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
@@ -73,6 +95,8 @@ fun ContentCard(
     focusRequester: FocusRequester? = null,
     posterCardStyle: PosterCardStyle = PosterCardDefaults.Style,
     showLabels: Boolean = true,
+    showImdbRatings: Boolean = true,
+    placeholderShimmerOffsetState: State<Float>? = null,
     focusedPosterBackdropExpandEnabled: Boolean = false,
     focusedPosterBackdropExpandDelaySeconds: Int = 3,
     focusedPosterBackdropTrailerEnabled: Boolean = false,
@@ -82,34 +106,49 @@ fun ContentCard(
     onRequestTrailerPreview: (MetaPreview) -> Unit = {},
     isWatched: Boolean = false,
     onFocus: (MetaPreview) -> Unit = {},
+    onBackdropExpandedChanged: ((Boolean) -> Unit)? = null,
+    expandedDownFocusRequester: FocusRequester? = null,
+    expandedUpFocusRequester: FocusRequester? = null,
     onLongPress: (() -> Unit)? = null,
     onClick: () -> Unit = {}
 ) {
     val cardShape = remember(posterCardStyle.cornerRadius) { RoundedCornerShape(posterCardStyle.cornerRadius) }
-    val baseCardWidth = when (item.posterShape) {
+    val cardDepthStyle = LocalCardDepthStyle.current
+    val globalLandscape = LocalLandscapePosterMode.current
+    val effectivePosterShape = if (globalLandscape) PosterShape.LANDSCAPE else item.posterShape
+    val baseCardWidth = when (effectivePosterShape) {
         PosterShape.POSTER -> posterCardStyle.width
-        PosterShape.LANDSCAPE -> 260.dp
+        PosterShape.LANDSCAPE -> posterCardStyle.height
         PosterShape.SQUARE -> 170.dp
     }
-    val baseCardHeight = when (item.posterShape) {
+    val baseCardHeight = when (effectivePosterShape) {
         PosterShape.POSTER -> posterCardStyle.height
-        PosterShape.LANDSCAPE -> 148.dp
+        PosterShape.LANDSCAPE -> posterCardStyle.height / PosterShape.LANDSCAPE.aspectRatio()
         PosterShape.SQUARE -> 170.dp
     }
-    val expandedCardWidth = baseCardHeight * BACKDROP_ASPECT_RATIO
+    // Landscape cards are already 16:9 — expanded width equals base width (no size change).
+    val expandedCardWidth = if (globalLandscape) baseCardWidth else baseCardHeight * BACKDROP_ASPECT_RATIO
+    val effectiveExpandEnabled = focusedPosterBackdropExpandEnabled
 
     var isFocused by remember { mutableStateOf(false) }
     var longPressTriggered by remember { mutableStateOf(false) }
+    val longPressKeyTracker = rememberLongPressKeyTracker()
     var interactionNonce by remember { mutableIntStateOf(0) }
     var isBackdropExpanded by remember { mutableStateOf(false) }
     var trailerFirstFrameRendered by remember(trailerPreviewUrl) { mutableStateOf(false) }
     val lifecycleOwner = LocalLifecycleOwner.current
 
-
-    val needsFocusState = focusedPosterBackdropExpandEnabled || focusedPosterBackdropTrailerEnabled
+    LaunchedEffect(isBackdropExpanded) {
+        onBackdropExpandedChanged?.invoke(isBackdropExpanded)
+    }
+    // The card always tracks live focus so the title marquee can scroll while the card is focused,
+    // even when the backdrop-expand / trailer features (which otherwise drive isFocused) are off.
+    val needsFocusState = true
     val lastFocusedRef = remember { booleanArrayOf(false) }
 
-    if (focusedPosterBackdropExpandEnabled) {
+    val isPlaceholderItem = item.poster == PLACEHOLDER_IMAGE_URL
+
+    if (effectiveExpandEnabled && !isPlaceholderItem) {
         LaunchedEffect(
             focusedPosterBackdropExpandDelaySeconds,
             isFocused,
@@ -124,9 +163,10 @@ fun ContentCard(
             val delaySeconds = focusedPosterBackdropExpandDelaySeconds.coerceAtLeast(0)
 
             isBackdropExpanded = false
-            val backdropDelayMs = delaySeconds * 1000L
+            // Minimum debounce so rapid D-pad scrolling doesn't expand every card.
+            val backdropDelayMs = if (delaySeconds == 0) 370L else delaySeconds * 1000L
             delay(backdropDelayMs)
-            if (isFocused && focusedPosterBackdropExpandEnabled &&
+            if (isFocused && effectiveExpandEnabled &&
                 lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)
             ) {
                 isBackdropExpanded = true
@@ -135,24 +175,15 @@ fun ContentCard(
     }
 
     if (focusedPosterBackdropTrailerEnabled) {
-        LaunchedEffect(
-            item.id,
-            isFocused,
-            trailerPreviewUrl
-        ) {
-            if (!isFocused) return@LaunchedEffect
-            if (trailerPreviewUrl != null) return@LaunchedEffect
-            delay(TRAILER_PREVIEW_REQUEST_FOCUS_DEBOUNCE_MS)
-            if (!isFocused) return@LaunchedEffect
-            if (!lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) return@LaunchedEffect
-            onRequestTrailerPreview(item)
-        }
+        // Trailer extraction is triggered by ModernHomeContent/ClassicHomeContent
+        // based on actual user focus, not by individual cards becoming visible.
+        // ContentCard only observes trailerPreviewUrl to start playback.
     }
 
     // Only pay the animation cost on the card that is actually focused/expanding.
     // Unfocused cards snap directly to baseCardWidth — no animation state overhead.
     val animatedCardWidth = when {
-        !focusedPosterBackdropExpandEnabled -> baseCardWidth
+        !effectiveExpandEnabled -> baseCardWidth
         !isFocused && !isBackdropExpanded -> baseCardWidth
         else -> {
             val targetCardWidth = if (isBackdropExpanded) expandedCardWidth else baseCardWidth
@@ -160,18 +191,36 @@ fun ContentCard(
             width
         }
     }
+    val metaTokensContext = LocalContext.current
     val metaTokens = if (isBackdropExpanded) {
-        remember(item.type, item.genres, item.releaseInfo, item.imdbRating) {
+        remember(metaTokensContext, item.type, item.rawType, item.genres, item.releaseInfo, item.imdbRating, item.seasonCount, showImdbRatings) {
             buildList {
                 add(
                     item.apiType
                         .replaceFirstChar { ch -> ch.uppercase() }
                 )
-                item.genres.firstOrNull()?.let { add(it) }
+                item.genres.firstOrNull()?.let { add(localizedGenreLabel(metaTokensContext, it)) }
+                if ((item.type == ContentType.SERIES || item.apiType.equals("series", ignoreCase = true)) &&
+                    item.seasonCount != null
+                ) {
+                    add("${item.seasonCount} ${if (item.seasonCount == 1) "season" else "seasons"}")
+                }
                 item.releaseInfo
-                    ?.let { YEAR_REGEX.find(it)?.value }
+                    ?.let { info ->
+                        val trimmed = info.trim()
+                        val rangeMatch = YEAR_RANGE_REGEX.find(trimmed)
+                        if (rangeMatch != null) {
+                            val startYear = rangeMatch.groupValues[1]
+                            val endYear = rangeMatch.groupValues[3]
+                            if (endYear.isNotBlank()) "$startYear–$endYear" else startYear
+                        } else {
+                            YEAR_REGEX.find(trimmed)?.value
+                        }
+                    }
                     ?.let { add(it) }
-                item.imdbRating?.let { add(String.format("%.1f", it)) }
+                item.imdbRating
+                    ?.takeIf { showImdbRatings }
+                    ?.let { add(String.format(java.util.Locale.US, "%.1f", it)) }
             }
         }
     } else {
@@ -179,37 +228,62 @@ fun ContentCard(
     }
 
     Column(
-        modifier = modifier.width(animatedCardWidth)
+        horizontalAlignment = Alignment.Start,
+        modifier = modifier
+            .width(animatedCardWidth)
+            .recompositionHighlighter()
     ) {
         val context = LocalContext.current
         val density = LocalDensity.current
         // Keep decode size stable during width animation to avoid recreating requests/painters every frame.
-        val maxRequestCardWidth = if (focusedPosterBackdropExpandEnabled) {
+        val maxRequestCardWidth = if (effectiveExpandEnabled) {
             maxOf(baseCardWidth, expandedCardWidth)
         } else {
             baseCardWidth
         }
         val requestWidthPx = remember(maxRequestCardWidth, density) {
-            with(density) { maxRequestCardWidth.roundToPx() }
+            with(density) { maxRequestCardWidth.roundToPx() }.coerceAtLeast(1)
         }
         val requestHeightPx = remember(baseCardHeight, density) {
-            with(density) { baseCardHeight.roundToPx() }
+            with(density) { baseCardHeight.roundToPx() }.coerceAtLeast(1)
         }
-        val imageUrl = if (focusedPosterBackdropExpandEnabled && isBackdropExpanded) {
+
+        val alwaysBackdropWithLogo = LocalAlwaysBackdropWithLogo.current
+        val effectiveLandscapePoster = if (globalLandscape && alwaysBackdropWithLogo) null else item.landscapePoster
+
+        val useLandscapeAsExpanded = effectiveExpandEnabled && isBackdropExpanded &&
+            !alwaysBackdropWithLogo &&
+            !item.landscapePoster.isNullOrBlank()
+
+        val imageUrl = if (globalLandscape) {
+            effectiveLandscapePoster ?: item.background ?: item.poster
+        } else if (useLandscapeAsExpanded) {
+            item.landscapePoster
+        } else if (effectiveExpandEnabled && isBackdropExpanded) {
             item.backdropUrl ?: item.poster
         } else {
             item.poster
         }
-        val imageModel = remember(imageUrl, requestWidthPx, requestHeightPx) {
-            ImageRequest.Builder(context)
+        val revalidationKey = com.nuvio.tv.core.image.rememberImageRevalidationKey(imageUrl)
+        val imageModel = remember(imageUrl, requestWidthPx, requestHeightPx, revalidationKey) {
+            val builder = ImageRequest.Builder(context)
                 .data(imageUrl)
-                .crossfade(false)
-                .memoryCacheKey("${imageUrl}_${requestWidthPx}x${requestHeightPx}")
+                .crossfade(true)
+                .memoryCacheKey("${imageUrl}_${requestWidthPx}x${requestHeightPx}_v$revalidationKey")
                 .size(width = requestWidthPx, height = requestHeightPx)
-                .build()
+            if (revalidationKey > 0) {
+                builder.placeholderMemoryCacheKey("${imageUrl}_${requestWidthPx}x${requestHeightPx}_v${revalidationKey - 1}")
+            }
+            val fallbackUrl = item.rawPosterUrl
+            if (!fallbackUrl.isNullOrBlank() && fallbackUrl != imageUrl) {
+                builder.memoryCacheKeyExtras(
+                    mapOf(com.nuvio.tv.core.image.CustomPosterFallbackInterceptor.FALLBACK_URL_KEY to fallbackUrl)
+                )
+            }
+            builder.build()
         }
         val logoRequestHeightPx = remember(density) {
-            with(density) { 48.dp.roundToPx() }
+            with(density) { NuvioTheme.spacing.xxxl.roundToPx() }
         }
         val logoModel = remember(item.logo, requestWidthPx, logoRequestHeightPx) {
             item.logo?.let { logoUrl ->
@@ -224,7 +298,7 @@ fun ContentCard(
         var logoLoadFailed by remember(item.logo) { mutableStateOf(false) }
         val showExpandedLogo = !item.logo.isNullOrBlank() && !logoLoadFailed
 
-        val bgCardColor = NuvioColors.BackgroundCard
+        val bgCardColor = NuvioTheme.colors.BackgroundCard
         val backgroundPainter = remember(bgCardColor) { androidx.compose.ui.graphics.painter.ColorPainter(bgCardColor) }
 
         Card(
@@ -259,7 +333,7 @@ fun ContentCard(
                 .onPreviewKeyEvent { keyEvent ->
                     val native = keyEvent.nativeKeyEvent
                     if (native.action == AndroidKeyEvent.ACTION_DOWN) {
-                        if (focusedPosterBackdropExpandEnabled && isFocused && shouldResetBackdropTimer(native)) {
+                        if (effectiveExpandEnabled && isFocused && shouldResetBackdropTimer(native)) {
                             interactionNonce++
                         }
                         if (onLongPress != null) {
@@ -268,23 +342,36 @@ fun ContentCard(
                                 onLongPress()
                                 return@onPreviewKeyEvent true
                             }
-                            val isLongPress = native.isLongPress || native.repeatCount > 0
-                            if (isLongPress && isSelectKey(native.keyCode)) {
-                                longPressTriggered = true
-                                onLongPress()
-                                return@onPreviewKeyEvent true
-                            }
                         }
+                    }
+                    if (onLongPress != null &&
+                        longPressKeyTracker.handle(native, ::isSelectKey) {
+                            longPressTriggered = true
+                            onLongPress()
+                        }
+                    ) {
+                        if (native.action == AndroidKeyEvent.ACTION_UP) {
+                            longPressTriggered = false
+                        }
+                        return@onPreviewKeyEvent true
                     }
                     if (native.action == AndroidKeyEvent.ACTION_UP &&
                         longPressTriggered &&
-                        isSelectKey(native.keyCode)
+                        (isSelectKey(native.keyCode) || native.keyCode == AndroidKeyEvent.KEYCODE_MENU)
                     ) {
                         longPressTriggered = false
                         return@onPreviewKeyEvent true
                     }
                     false
                 }
+                .then(
+                    if (isBackdropExpanded && (expandedDownFocusRequester != null || expandedUpFocusRequester != null)) {
+                        Modifier.focusProperties {
+                            if (expandedDownFocusRequester != null) down = expandedDownFocusRequester
+                            if (expandedUpFocusRequester != null) up = expandedUpFocusRequester
+                        }
+                    } else Modifier
+                )
                 .then(
                     if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier
                 ),
@@ -295,7 +382,7 @@ fun ContentCard(
             ),
             border = CardDefaults.border(
                 focusedBorder = Border(
-                    border = BorderStroke(posterCardStyle.focusedBorderWidth, NuvioColors.FocusRing),
+                    border = NuvioTheme.focusRing.border(posterCardStyle.focusedBorderWidth),
                     shape = cardShape
                 )
             ),
@@ -306,8 +393,27 @@ fun ContentCard(
                     .fillMaxWidth()
                     .height(baseCardHeight)
                     .clip(cardShape)
+                    .nuvioCardDepth(
+                        shape = cardShape,
+                        surface = CardDepthSurface.POSTERS,
+                        style = cardDepthStyle
+                    )
             ) {
-                if (!imageUrl.isNullOrBlank()) {
+                val isPlaceholderItem = imageUrl == PLACEHOLDER_IMAGE_URL
+                if (isPlaceholderItem) {
+                    val effectivePlaceholderShimmerOffsetState =
+                        placeholderShimmerOffsetState ?: rememberPlaceholderShimmerOffsetState(
+                            label = "classicPlaceholderShimmer"
+                        )
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .placeholderCardShimmer(
+                                shimmerOffsetState = effectivePlaceholderShimmerOffsetState,
+                                backgroundColor = NuvioTheme.colors.BackgroundCard
+                            )
+                    )
+                } else if (!imageUrl.isNullOrBlank()) {
                     AsyncImage(
                         model = imageModel,
                         contentDescription = item.name,
@@ -320,6 +426,10 @@ fun ContentCard(
                 } else {
                     MonochromePosterPlaceholder()
                 }
+
+                // Landscape mode: show clearlogo or title overlay on backdrop cards
+                val isLandscapeBackdropCard = globalLandscape &&
+                    effectiveLandscapePoster.isNullOrBlank()
 
                 val shouldPlayTrailerPreview = isBackdropExpanded &&
                     focusedPosterBackdropTrailerEnabled &&
@@ -347,6 +457,15 @@ fun ContentCard(
                 }
 
                 if (shouldPlayTrailerPreview) {
+                    // Black plate under FIT-mode video so non-16:9 trailers letterbox
+                    // to black instead of revealing the expanded backdrop (#2852).
+                    // The backdrop cover above still hides load-in; it fades out after
+                    // the first frame, leaving black + trailer only.
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(Color.Black)
+                    )
                     TrailerPlayer(
                         trailerUrl = trailerPreviewUrl,
                         trailerAudioUrl = trailerPreviewAudioUrl,
@@ -374,12 +493,15 @@ fun ContentCard(
                     )
                 }
 
-                if (isBackdropExpanded) {
+                if (isBackdropExpanded && !globalLandscape && !(useLandscapeAsExpanded && !trailerFirstFrameRendered)) {
                     Box(
                         modifier = Modifier
                             .align(Alignment.BottomStart)
                             .fillMaxWidth()
                             .height(96.dp)
+                            .graphicsLayer {
+                                compositingStrategy = CompositingStrategy.Offscreen
+                            }
                             .drawWithCache {
                                 val gradient = Brush.verticalGradient(
                                     colors = listOf(
@@ -396,7 +518,7 @@ fun ContentCard(
                     Column(
                         modifier = Modifier
                             .align(Alignment.BottomStart)
-                            .padding(start = 12.dp, end = 12.dp, bottom = 12.dp)
+                            .padding(start = NuvioTheme.spacing.md, end = NuvioTheme.spacing.md, bottom = NuvioTheme.spacing.md)
                             .fillMaxWidth(0.75f)
                     ) {
                         if (showExpandedLogo) {
@@ -405,112 +527,231 @@ fun ContentCard(
                                 contentDescription = item.name,
                                 onError = { logoLoadFailed = true },
                                 modifier = Modifier
-                                    .height(48.dp)
+                                    .height(NuvioTheme.spacing.xxxl)
                                     .fillMaxWidth(),
                                 contentScale = ContentScale.Fit,
                                 alignment = Alignment.CenterStart
                             )
                         } else {
-                            Text(
+                            FocusMarqueeText(
                                 text = item.name,
+                                focused = isFocused,
                                 style = MaterialTheme.typography.titleMedium,
                                 color = Color.White,
-                                maxLines = 2,
-                                overflow = TextOverflow.Ellipsis
                             )
                         }
                     }
                 }
 
-                if (isWatched) {
-                    Icon(
-                        imageVector = Icons.Default.CheckCircle,
-                        contentDescription = stringResource(R.string.episodes_cd_watched),
-                        tint = Color.White,
+                // Landscape overlay — rendered AFTER trailer so it stays on top.
+                // Show on backdrop cards always; also show on any landscape card when expanded
+                // (trailer playing) so the logo stays visible over the video.
+                val showLandscapeOverlay = globalLandscape && (isLandscapeBackdropCard || isBackdropExpanded) &&
+                    !(useLandscapeAsExpanded && !trailerFirstFrameRendered)
+                val showLandscapeLogoOverlay = showLandscapeOverlay &&
+                    !item.logo.isNullOrBlank() && !logoLoadFailed
+                if (showLandscapeLogoOverlay && logoModel != null) {
+                    Box(
                         modifier = Modifier
-                            .align(Alignment.TopEnd)
-                            .padding(end = 8.dp, top = 8.dp)
-                            .zIndex(2f)
-                            .size(21.dp)
-                            .drawBehind {
-                                drawCircle(
-                                    color = androidx.compose.ui.graphics.Color.Black,
-                                    radius = size.minDimension / 2f + 1.5f
+                            .fillMaxSize()
+                            .zIndex(1.5f)
+                            .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
+                            .drawWithCache {
+                                val gradient = Brush.verticalGradient(
+                                    colorStops = arrayOf(
+                                        0.0f to Color.Transparent,
+                                        0.58f to Color.Transparent,
+                                        1.0f to Color.Black.copy(alpha = 0.75f)
+                                    )
                                 )
+                                onDrawBehind { drawRect(gradient) }
                             }
                     )
-                }
-            }
-        }
-
-        if (isBackdropExpanded) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 8.dp)
-            ) {
-                if (metaTokens.isNotEmpty()) {
-                    Text(
-                        text = metaTokens.joinToString("  •  "),
-                        style = MaterialTheme.typography.labelMedium,
-                        color = NuvioTheme.extendedColors.textSecondary,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
+                    AsyncImage(
+                        model = logoModel,
+                        contentDescription = item.name,
+                        onError = { logoLoadFailed = true },
+                        modifier = Modifier
+                            .align(Alignment.BottomStart)
+                            .fillMaxWidth(0.62f)
+                            .height(baseCardHeight * 0.34f)
+                            .padding(start = 10.dp, end = 10.dp, bottom = NuvioTheme.spacing.sm)
+                            .zIndex(1.6f),
+                        contentScale = ContentScale.Fit,
+                        alignment = Alignment.CenterStart
                     )
-                }
-
-                item.description?.takeIf { it.isNotBlank() }?.let { description ->
-                    Spacer(modifier = Modifier.height(4.dp))
+                } else if (showLandscapeOverlay && !showLandscapeLogoOverlay) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .zIndex(1.5f)
+                            .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
+                            .drawWithCache {
+                                val gradient = Brush.verticalGradient(
+                                    colorStops = arrayOf(
+                                        0.0f to Color.Transparent,
+                                        0.58f to Color.Transparent,
+                                        1.0f to Color.Black.copy(alpha = 0.75f)
+                                    )
+                                )
+                                onDrawBehind { drawRect(gradient) }
+                            }
+                    )
                     Text(
-                        text = description,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = NuvioColors.TextPrimary,
+                        text = item.name,
+                        style = MaterialTheme.typography.titleMedium,
+                        color = Color.White,
                         maxLines = 2,
-                        overflow = TextOverflow.Ellipsis
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier
+                            .align(Alignment.BottomStart)
+                            .fillMaxWidth(0.62f)
+                            .padding(start = 10.dp, end = 10.dp, bottom = NuvioTheme.spacing.md)
+                            .zIndex(1.6f)
+                    )
+                }
+
+                if (isWatched) {
+                    WatchedMarker(
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .padding(end = NuvioTheme.spacing.sm, top = NuvioTheme.spacing.sm)
+                            .zIndex(2f)
                     )
                 }
             }
         }
 
-        if (showLabels && !isBackdropExpanded) {
+        // When backdrop expand is enabled, both the labels state and the
+        // expanded state share a single Column with a fixed minimum height
+        // so the row never shifts vertically during the expand transition.
+        if (showLabels) {
+            Box(modifier = Modifier.fillMaxWidth().clipToBounds().graphicsLayer {}) {
             Column(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 8.dp)
-            ) {
-                Text(
-                    text = item.name,
-                    style = MaterialTheme.typography.titleMedium,
-                    color = NuvioColors.TextPrimary,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-                item.releaseInfo?.let { info ->
-                    Text(
-                        text = info,
-                        style = MaterialTheme.typography.labelMedium,
-                        color = NuvioTheme.extendedColors.textSecondary,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
+                    .then(if (isBackdropExpanded && !globalLandscape) Modifier.requiredWidth(expandedCardWidth) else Modifier.fillMaxWidth())
+                    .padding(top = NuvioTheme.spacing.sm)
+                    .then(
+                        if (effectiveExpandEnabled) {
+                            Modifier.defaultMinSize(minHeight = 60.dp)
+                        } else Modifier
                     )
+            ) {
+                // Landscape cards don't change width on expand, so crossfade between
+                // the normal label and the expanded description instead of relying on
+                // the width animation to reveal content.
+                androidx.compose.animation.Crossfade(
+                    targetState = isBackdropExpanded,
+                    animationSpec = tween(durationMillis = if (globalLandscape) 250 else 0),
+                    label = "expandedLabelCrossfade"
+                ) { expanded ->
+                if (expanded) {
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                    val ageRating = item.ageRating?.trim()?.takeIf { it.isNotBlank() }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        if (metaTokens.isNotEmpty()) {
+                            Text(
+                                text = metaTokens.joinToString("  •  "),
+                                style = MaterialTheme.typography.labelMedium,
+                                color = NuvioTheme.extendedColors.textSecondary,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f, fill = false)
+                            )
+                        }
+                        if (ageRating != null) {
+                            if (metaTokens.isNotEmpty()) {
+                                Text(
+                                    text = "  •  ",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = NuvioTheme.extendedColors.textSecondary
+                                )
+                            }
+                            Box(
+                                modifier = Modifier
+                                    
+                                    .border(
+                                        border = BorderStroke(
+                                            NuvioTheme.spacing.hairline,
+                                            NuvioTheme.extendedColors.textSecondary.copy(alpha = 0.55f)
+                                        ),
+                                        shape = RoundedCornerShape(4.dp)
+                                    )
+                                    .padding(horizontal = NuvioTheme.spacing.sm, vertical = 2.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = ageRating,
+                                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.SemiBold),
+                                    color = NuvioTheme.extendedColors.textSecondary,
+                                    maxLines = 1
+                                )
+                            }
+                        }
+                    }
+                    item.description?.takeIf { it.isNotBlank() }?.let { description ->
+                        Spacer(modifier = Modifier.height(NuvioTheme.spacing.xs))
+                        Text(
+                            text = description,
+                            style = MaterialTheme.typography.bodySmall.copy(
+                                textDirection = description.contentTextDirection()
+                            ),
+                            color = NuvioTheme.colors.TextPrimary,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                    } // Column (expanded)
+                } else {
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                    FocusMarqueeText(
+                        text = item.name,
+                        focused = isFocused,
+                        style = MaterialTheme.typography.titleMedium,
+                        color = NuvioTheme.colors.TextPrimary,
+                    )
+                    item.releaseInfo?.let { info ->
+                        Spacer(modifier = Modifier.height(2.dp))
+                        FocusMarqueeText(
+                            text = info,
+                            focused = isFocused,
+                            style = MaterialTheme.typography.labelMedium,
+                            color = NuvioTheme.extendedColors.textSecondary,
+                        )
+                    }
+                    if (effectiveExpandEnabled) {
+                        Spacer(modifier = Modifier.height(15.dp))
+                    }
+                    } // Column (collapsed)
                 }
+                } // Crossfade
             }
+            } // Box clipToBounds
+        }
+        if (!showLabels && effectiveExpandEnabled) {
+            Spacer(modifier = Modifier.height(9.dp))
         }
     }
 }
 
+/**
+ * Keys that should collapse an expanded poster so navigation can re-arm expand.
+ *
+ * Select keys (Center / Enter) are intentionally excluded: holding them opens the
+ * action menu. Resetting the expand timer on those keys collapsed and re-expanded
+ * the card while the menu was opening (#2574).
+ */
 private fun shouldResetBackdropTimer(nativeEvent: AndroidKeyEvent): Boolean {
-    if (nativeEvent.action != AndroidKeyEvent.ACTION_DOWN) return false
-    if (nativeEvent.repeatCount > 0 || nativeEvent.isLongPress) return false
-
-    return when (nativeEvent.keyCode) {
+    val key = nativeEvent.keyCode
+    return when (key) {
         AndroidKeyEvent.KEYCODE_DPAD_UP,
         AndroidKeyEvent.KEYCODE_DPAD_DOWN,
         AndroidKeyEvent.KEYCODE_DPAD_LEFT,
         AndroidKeyEvent.KEYCODE_DPAD_RIGHT,
-        AndroidKeyEvent.KEYCODE_DPAD_CENTER,
-        AndroidKeyEvent.KEYCODE_ENTER,
-        AndroidKeyEvent.KEYCODE_NUMPAD_ENTER,
         AndroidKeyEvent.KEYCODE_BACK -> true
         else -> false
     }

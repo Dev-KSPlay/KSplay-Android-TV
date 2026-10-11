@@ -2,13 +2,18 @@
 
 package com.nuvio.tv.ui.screens.settings
 
+import com.nuvio.tv.ui.theme.NuvioTheme
+
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -23,7 +28,8 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.tv.material3.ExperimentalTvMaterial3Api
 import com.nuvio.tv.R
-import com.nuvio.tv.data.local.AVAILABLE_SUBTITLE_LANGUAGES
+import com.nuvio.tv.core.build.AppFeaturePolicy
+import com.nuvio.tv.data.local.AVAILABLE_TMDB_LANGUAGES
 import com.nuvio.tv.data.local.displayName
 
 @Composable
@@ -63,8 +69,12 @@ fun TmdbSettingsContent(
                 .fillMaxWidth()
                 .weight(1f)
         ) {
+            val tmdbListState = rememberLazyListState()
+            Box(modifier = Modifier.fillMaxSize()) {
             LazyColumn(
-                contentPadding = PaddingValues(bottom = 8.dp),
+                state = tmdbListState,
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(bottom = NuvioTheme.spacing.sm),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 item(key = "tmdb_enabled") {
@@ -73,11 +83,14 @@ fun TmdbSettingsContent(
                         subtitle = stringResource(R.string.tmdb_enable_subtitle),
                         checked = uiState.enabled,
                         onToggle = { viewModel.onEvent(TmdbSettingsEvent.ToggleEnabled(!uiState.enabled)) },
-                        modifier = if (initialFocusRequester != null) {
-                            Modifier.focusRequester(initialFocusRequester)
-                        } else {
-                            Modifier
-                        }
+                        modifier = Modifier
+                            .padding(top = NuvioTheme.spacing.xxs)
+                            .then(
+                                if (initialFocusRequester != null) {
+                                    Modifier.focusRequester(initialFocusRequester)
+                                } else {
+                                    Modifier
+                                })
                     )
                 }
 
@@ -110,7 +123,7 @@ fun TmdbSettingsContent(
                 }
 
                 item(key = "tmdb_language") {
-                    val languageName = AVAILABLE_SUBTITLE_LANGUAGES
+                    val languageName = AVAILABLE_TMDB_LANGUAGES
                         .find { it.code == uiState.language }
                         ?.displayName
                         ?: uiState.language.uppercase()
@@ -150,16 +163,6 @@ fun TmdbSettingsContent(
                         checked = uiState.useDetails,
                         enabled = uiState.enabled,
                         onToggle = { viewModel.onEvent(TmdbSettingsEvent.ToggleDetails(!uiState.useDetails)) }
-                    )
-                }
-
-                item(key = "tmdb_release_dates") {
-                    SettingsToggleRow(
-                        title = stringResource(R.string.tmdb_release_dates_title),
-                        subtitle = stringResource(R.string.tmdb_release_dates_subtitle),
-                        checked = uiState.useReleaseDates,
-                        enabled = uiState.enabled,
-                        onToggle = { viewModel.onEvent(TmdbSettingsEvent.ToggleReleaseDates(!uiState.useReleaseDates)) }
                     )
                 }
 
@@ -203,6 +206,22 @@ fun TmdbSettingsContent(
                     )
                 }
 
+                if (AppFeaturePolicy.inAppTrailerPlaybackEnabled) {
+                    item(key = "tmdb_trailers") {
+                        SettingsToggleRow(
+                            title = stringResource(R.string.tmdb_trailers_title),
+                            subtitle = stringResource(R.string.tmdb_trailers_subtitle),
+                            checked = uiState.useTrailers,
+                            enabled = uiState.enabled,
+                            onToggle = {
+                                viewModel.onEvent(
+                                    TmdbSettingsEvent.ToggleTrailers(!uiState.useTrailers)
+                                )
+                            }
+                        )
+                    }
+                }
+
                 item(key = "tmdb_more_like_this") {
                     SettingsToggleRow(
                         title = stringResource(R.string.tmdb_more_like_this_title),
@@ -231,6 +250,8 @@ fun TmdbSettingsContent(
                     )
                 }
 
+            }
+            SettingsVerticalScrollIndicators(state = tmdbListState)
             }
         }
     }

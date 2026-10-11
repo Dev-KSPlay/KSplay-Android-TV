@@ -2,6 +2,8 @@
 
 package com.nuvio.tv.ui.screens.settings
 
+import com.nuvio.tv.ui.theme.NuvioTheme
+
 import android.view.KeyEvent
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
@@ -15,7 +17,6 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -24,13 +25,6 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.Extension
-import androidx.compose.material.icons.filled.Language
-import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.SkipNext
-import androidx.compose.material.icons.filled.Timer
-import androidx.compose.material.icons.filled.History
-import androidx.compose.material.icons.filled.Tune
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -50,6 +44,8 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.style.TextDirection
+import androidx.compose.ui.text.TextStyle
 import com.nuvio.tv.R
 import androidx.tv.material3.Border
 import androidx.tv.material3.Button
@@ -60,228 +56,250 @@ import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.Icon
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
+import com.nuvio.tv.core.build.AppFeaturePolicy
 import com.nuvio.tv.data.local.PlayerSettings
 import com.nuvio.tv.data.local.NextEpisodeThresholdMode
 import com.nuvio.tv.data.local.StreamAutoPlayMode
 import com.nuvio.tv.data.local.StreamAutoPlaySource
 import com.nuvio.tv.ui.components.NuvioDialog
-import com.nuvio.tv.ui.theme.NuvioColors
 import kotlin.math.roundToInt
 import java.util.Locale
 
-internal fun LazyListScope.autoPlaySettingsItems(
-    playerSettings: PlayerSettings,
-    onShowModeDialog: () -> Unit,
-    onShowSourceDialog: () -> Unit,
-    onShowAddonSelectionDialog: () -> Unit,
-    onShowPluginSelectionDialog: () -> Unit,
-    onShowRegexDialog: () -> Unit,
-    onShowNextEpisodeThresholdModeDialog: () -> Unit,
-    onShowReuseLastLinkCacheDialog: () -> Unit,
-    onSetStreamAutoPlayNextEpisodeEnabled: (Boolean) -> Unit,
-    onSetStreamAutoPlayPreferBingeGroupForNextEpisode: (Boolean) -> Unit,
-    onSetNextEpisodeThresholdPercent: (Float) -> Unit,
-    onSetNextEpisodeThresholdMinutesBeforeEnd: (Float) -> Unit,
-    onSetStreamAutoPlayTimeoutSeconds: (Int) -> Unit,
-    onSetReuseLastLinkEnabled: (Boolean) -> Unit,
-    onItemFocused: () -> Unit = {}
+@Composable
+internal fun PlaybackStreamSelectionSection(
+    settings: PlayerSettings,
+    onUpdate: PlaybackSettingsUpdate,
+    onOpenDialog: (PlaybackDialog) -> Unit
 ) {
-    item(key = "autoplay_reuse_last_link") {
-        ToggleSettingsItem(
-            icon = Icons.Default.History,
-            title = stringResource(R.string.autoplay_reuse_last_link),
-            subtitle = stringResource(R.string.autoplay_reuse_last_link_sub),
-            isChecked = playerSettings.streamReuseLastLinkEnabled,
-            onCheckedChange = onSetReuseLastLinkEnabled,
-            onFocused = onItemFocused
-        )
+    val effectiveAutoPlaySource = if (
+        !AppFeaturePolicy.pluginsEnabled &&
+        settings.streamAutoPlaySource == StreamAutoPlaySource.ENABLED_PLUGINS_ONLY
+    ) {
+        StreamAutoPlaySource.INSTALLED_ADDONS_ONLY
+    } else {
+        settings.streamAutoPlaySource
     }
 
-    if (playerSettings.streamReuseLastLinkEnabled) {
-        item(key = "autoplay_reuse_cache_duration") {
-            NavigationSettingsItem(
-                icon = Icons.Default.Tune,
-                title = stringResource(R.string.autoplay_last_link_cache),
-                subtitle = formatReuseCacheDuration(playerSettings.streamReuseLastLinkCacheHours),
-                onClick = onShowReuseLastLinkCacheDialog,
-                onFocused = onItemFocused
-            )
-        }
-    }
-
-    item(key = "autoplay_mode") {
-        val modeLabel = when (playerSettings.streamAutoPlayMode) {
+    SettingsActionRow(
+        title = stringResource(R.string.autoplay_stream_selection),
+        subtitle = null,
+        value = when (settings.streamAutoPlayMode) {
             StreamAutoPlayMode.MANUAL -> stringResource(R.string.autoplay_mode_manual)
             StreamAutoPlayMode.FIRST_STREAM -> stringResource(R.string.autoplay_mode_first)
             StreamAutoPlayMode.REGEX_MATCH -> stringResource(R.string.autoplay_mode_regex)
-        }
-        NavigationSettingsItem(
-            icon = Icons.Default.PlayArrow,
-            title = stringResource(R.string.autoplay_stream_selection),
-            subtitle = modeLabel,
-            onClick = onShowModeDialog,
-            onFocused = onItemFocused
+        },
+        onClick = { onOpenDialog(PlaybackDialog.STREAM_AUTO_PLAY_MODE) }
+    )
+
+    if (settings.streamAutoPlayMode == StreamAutoPlayMode.REGEX_MATCH) {
+        SettingsActionRow(
+            title = stringResource(R.string.autoplay_regex_title),
+            subtitle = settings.streamAutoPlayRegex.ifBlank { stringResource(R.string.autoplay_regex_placeholder) },
+            onClick = { onOpenDialog(PlaybackDialog.STREAM_REGEX) }
         )
     }
 
-    item(key = "autoplay_stream_timeout") {
-        val timeoutSec = playerSettings.streamAutoPlayTimeoutSeconds
-        val valueText = when (timeoutSec) {
-            0 -> stringResource(R.string.autoplay_timeout_instant)
-            11 -> stringResource(R.string.autoplay_timeout_unlimited)
-            else -> "${timeoutSec}s"
-        }
-        SliderSettingsItem(
-            icon = Icons.Default.Timer,
-            title = stringResource(R.string.autoplay_timeout_title),
-            subtitle = stringResource(R.string.autoplay_timeout_sub),
-            value = timeoutSec,
-            valueText = valueText,
-            minValue = 0,
-            maxValue = 11,
-            step = 1,
-            onValueChange = { onSetStreamAutoPlayTimeoutSeconds(it) },
-            onFocused = onItemFocused
-        )
-    }
-
-    item(key = "autoplay_next_episode") {
-        ToggleSettingsItem(
-            icon = Icons.Default.SkipNext,
-            title = stringResource(R.string.autoplay_next_episode),
-            subtitle = stringResource(R.string.autoplay_next_episode_sub),
-            isChecked = playerSettings.streamAutoPlayNextEpisodeEnabled,
-            onCheckedChange = onSetStreamAutoPlayNextEpisodeEnabled,
-            onFocused = onItemFocused
-        )
-    }
-
-    item(key = "autoplay_next_episode_prefer_binge_group") {
-        ToggleSettingsItem(
-            icon = Icons.Default.Tune,
-            title = stringResource(R.string.autoplay_prefer_binge_group),
-            subtitle = stringResource(R.string.autoplay_prefer_binge_group_sub),
-            isChecked = playerSettings.streamAutoPlayPreferBingeGroupForNextEpisode,
-            onCheckedChange = onSetStreamAutoPlayPreferBingeGroupForNextEpisode,
-            onFocused = onItemFocused
-        )
-    }
-
-    item(key = "autoplay_threshold_mode") {
-        val thresholdModeSubtitle = when (playerSettings.nextEpisodeThresholdMode) {
-            NextEpisodeThresholdMode.PERCENTAGE -> stringResource(R.string.autoplay_threshold_pct)
-            NextEpisodeThresholdMode.MINUTES_BEFORE_END -> stringResource(R.string.autoplay_threshold_min)
-        }
-        NavigationSettingsItem(
-            icon = Icons.Default.Tune,
-            title = stringResource(R.string.autoplay_threshold_mode),
-            subtitle = thresholdModeSubtitle,
-            onClick = onShowNextEpisodeThresholdModeDialog,
-            onFocused = onItemFocused
-        )
-    }
-
-    item(key = "autoplay_threshold_value") {
-        when (playerSettings.nextEpisodeThresholdMode) {
-            NextEpisodeThresholdMode.PERCENTAGE -> {
-                SliderSettingsItem(
-                    icon = Icons.Default.Tune,
-                    title = stringResource(R.string.autoplay_threshold_pct_title),
-                    subtitle = stringResource(R.string.autoplay_threshold_pct_sub),
-                    value = (playerSettings.nextEpisodeThresholdPercent * 2f).roundToInt(),
-                    valueText = "${formatHalfStepValue(playerSettings.nextEpisodeThresholdPercent)}%",
-                    minValue = 194,
-                    maxValue = 199,
-                    step = 1,
-                    onValueChange = { onSetNextEpisodeThresholdPercent(it / 2f) },
-                    onFocused = onItemFocused
-                )
-            }
-            NextEpisodeThresholdMode.MINUTES_BEFORE_END -> {
-                SliderSettingsItem(
-                    icon = Icons.Default.Tune,
-                    title = stringResource(R.string.autoplay_threshold_min_title),
-                    subtitle = stringResource(R.string.autoplay_threshold_pct_sub),
-                    value = (playerSettings.nextEpisodeThresholdMinutesBeforeEnd * 2f).roundToInt(),
-                    valueText = "${formatHalfStepValue(playerSettings.nextEpisodeThresholdMinutesBeforeEnd)} min",
-                    minValue = 2,
-                    maxValue = 7,
-                    step = 1,
-                    onValueChange = { onSetNextEpisodeThresholdMinutesBeforeEnd(it / 2f) },
-                    onFocused = onItemFocused
-                )
-            }
-        }
-    }
-
-    if (playerSettings.streamAutoPlayMode != StreamAutoPlayMode.MANUAL) {
-
-        item(key = "autoplay_source_scope") {
-            val sourceLabel = when (playerSettings.streamAutoPlaySource) {
+    if (settings.streamAutoPlayMode != StreamAutoPlayMode.MANUAL) {
+        SettingsActionRow(
+            title = stringResource(R.string.autoplay_scope),
+            subtitle = null,
+            value = when (effectiveAutoPlaySource) {
                 StreamAutoPlaySource.ALL_SOURCES -> stringResource(R.string.autoplay_scope_all)
                 StreamAutoPlaySource.INSTALLED_ADDONS_ONLY -> stringResource(R.string.autoplay_scope_addons)
                 StreamAutoPlaySource.ENABLED_PLUGINS_ONLY -> stringResource(R.string.autoplay_scope_plugins)
-            }
-            NavigationSettingsItem(
-                icon = Icons.Default.Tune,
-                title = stringResource(R.string.autoplay_scope),
-                subtitle = sourceLabel,
-                onClick = onShowSourceDialog,
-                onFocused = onItemFocused
+            },
+            onClick = { onOpenDialog(PlaybackDialog.STREAM_AUTO_PLAY_SOURCE) }
+        )
+
+        if (effectiveAutoPlaySource != StreamAutoPlaySource.ENABLED_PLUGINS_ONLY) {
+            SettingsActionRow(
+                title = stringResource(R.string.autoplay_allowed_addons),
+                subtitle = null,
+                value = selectionSummary(
+                    selectedCount = settings.streamAutoPlaySelectedAddons.size,
+                    allLabel = stringResource(R.string.autoplay_all_addons)
+                ),
+                onClick = { onOpenDialog(PlaybackDialog.STREAM_AUTO_PLAY_ADDONS) }
             )
         }
 
-        if (playerSettings.streamAutoPlaySource != StreamAutoPlaySource.ENABLED_PLUGINS_ONLY) {
-            item(key = "autoplay_allowed_addons") {
-                val addonSubtitle = if (playerSettings.streamAutoPlaySelectedAddons.isEmpty()) {
-                    stringResource(R.string.autoplay_all_addons)
-                } else {
-                    "${playerSettings.streamAutoPlaySelectedAddons.size} selected"
-                }
-                NavigationSettingsItem(
-                    icon = Icons.Default.Language,
-                    title = stringResource(R.string.autoplay_allowed_addons),
-                    subtitle = addonSubtitle,
-                    onClick = onShowAddonSelectionDialog,
-                    onFocused = onItemFocused
-                )
-            }
-        }
-
-        if (playerSettings.streamAutoPlaySource != StreamAutoPlaySource.INSTALLED_ADDONS_ONLY) {
-            item(key = "autoplay_allowed_plugins") {
-                val pluginSubtitle = if (playerSettings.streamAutoPlaySelectedPlugins.isEmpty()) {
-                    stringResource(R.string.autoplay_all_plugins)
-                } else {
-                    "${playerSettings.streamAutoPlaySelectedPlugins.size} selected"
-                }
-                NavigationSettingsItem(
-                    icon = Icons.Default.Extension,
-                    title = stringResource(R.string.autoplay_allowed_plugins),
-                    subtitle = pluginSubtitle,
-                    onClick = onShowPluginSelectionDialog,
-                    onFocused = onItemFocused
-                )
-            }
+        if (
+            AppFeaturePolicy.pluginsEnabled &&
+            effectiveAutoPlaySource != StreamAutoPlaySource.INSTALLED_ADDONS_ONLY
+        ) {
+            SettingsActionRow(
+                title = stringResource(R.string.autoplay_allowed_plugins),
+                subtitle = null,
+                value = selectionSummary(
+                    selectedCount = settings.streamAutoPlaySelectedPlugins.size,
+                    allLabel = stringResource(R.string.autoplay_all_plugins)
+                ),
+                onClick = { onOpenDialog(PlaybackDialog.STREAM_AUTO_PLAY_PLUGINS) }
+            )
         }
     }
 
-    if (playerSettings.streamAutoPlayMode == StreamAutoPlayMode.REGEX_MATCH) {
-        item(key = "autoplay_regex_pattern") {
-            val strRegexPlaceholder = stringResource(R.string.autoplay_regex_placeholder)
-            val regexSubtitle = playerSettings.streamAutoPlayRegex.ifBlank {
-                strRegexPlaceholder
-            }
-            NavigationSettingsItem(
-                icon = Icons.Default.Tune,
-                title = stringResource(R.string.autoplay_regex_title),
-                subtitle = regexSubtitle,
-                onClick = onShowRegexDialog,
-                onFocused = onItemFocused
-            )
-        }
+    val timeoutSeconds = settings.streamAutoPlayTimeoutSeconds
+    SliderSettingsItem(
+        title = stringResource(R.string.autoplay_timeout_title),
+        subtitle = stringResource(R.string.autoplay_timeout_sub),
+        values = PlayerSettings.STREAM_AUTOPLAY_TIMEOUT_VALUES,
+        selected = timeoutSeconds,
+        valueText = when (timeoutSeconds) {
+            0 -> stringResource(R.string.autoplay_timeout_instant)
+            PlayerSettings.STREAM_AUTOPLAY_TIMEOUT_UNLIMITED -> stringResource(R.string.autoplay_timeout_unlimited)
+            else -> "${timeoutSeconds}s"
+        },
+        onValueChange = { seconds -> onUpdate { setStreamAutoPlayTimeoutSeconds(seconds) } }
+    )
+
+    SettingsToggleRow(
+        title = stringResource(R.string.autoplay_preload_next_episode),
+        subtitle = stringResource(R.string.autoplay_preload_next_episode_sub),
+        checked = settings.preloadNextEpisodeSources,
+        onToggle = { onUpdate { setPreloadNextEpisodeSources(!settings.preloadNextEpisodeSources) } }
+    )
+
+    SettingsToggleRow(
+        title = stringResource(R.string.autoplay_reuse_last_link),
+        subtitle = stringResource(R.string.autoplay_reuse_last_link_sub),
+        checked = settings.streamReuseLastLinkEnabled,
+        onToggle = { onUpdate { setStreamReuseLastLinkEnabled(!settings.streamReuseLastLinkEnabled) } }
+    )
+
+    if (settings.streamReuseLastLinkEnabled) {
+        SettingsActionRow(
+            title = stringResource(R.string.autoplay_last_link_cache),
+            subtitle = null,
+            value = formatReuseCacheDuration(settings.streamReuseLastLinkCacheHours),
+            onClick = { onOpenDialog(PlaybackDialog.REUSE_LAST_LINK_CACHE) }
+        )
     }
 }
+
+@Composable
+internal fun PlaybackUpNextSection(
+    settings: PlayerSettings,
+    onUpdate: PlaybackSettingsUpdate,
+    onOpenDialog: (PlaybackDialog) -> Unit
+) {
+    SettingsToggleRow(
+        title = stringResource(R.string.autoplay_next_episode),
+        subtitle = stringResource(R.string.autoplay_next_episode_sub),
+        checked = settings.streamAutoPlayNextEpisodeEnabled,
+        onToggle = { onUpdate { setStreamAutoPlayNextEpisodeEnabled(!settings.streamAutoPlayNextEpisodeEnabled) } }
+    )
+
+    if (settings.streamAutoPlayNextEpisodeEnabled && settings.streamAutoPlayMode == StreamAutoPlayMode.MANUAL) {
+        SettingsToggleRow(
+            title = stringResource(R.string.autoplay_next_episode_fallback),
+            subtitle = stringResource(R.string.autoplay_next_episode_fallback_sub),
+            checked = settings.streamAutoPlayNextEpisodeFallbackEnabled,
+            onToggle = {
+                onUpdate { setStreamAutoPlayNextEpisodeFallbackEnabled(!settings.streamAutoPlayNextEpisodeFallbackEnabled) }
+            }
+        )
+    }
+
+    SettingsActionRow(
+        title = stringResource(R.string.autoplay_threshold_mode),
+        subtitle = null,
+        value = when (settings.nextEpisodeThresholdMode) {
+            NextEpisodeThresholdMode.PERCENTAGE -> stringResource(R.string.autoplay_threshold_pct)
+            NextEpisodeThresholdMode.MINUTES_BEFORE_END -> stringResource(R.string.autoplay_threshold_min)
+        },
+        onClick = { onOpenDialog(PlaybackDialog.NEXT_EPISODE_THRESHOLD_MODE) }
+    )
+
+    when (settings.nextEpisodeThresholdMode) {
+        NextEpisodeThresholdMode.PERCENTAGE -> SliderSettingsItem(
+            title = stringResource(R.string.autoplay_threshold_pct_title),
+            subtitle = stringResource(R.string.autoplay_threshold_pct_sub),
+            value = (settings.nextEpisodeThresholdPercent * 2f).roundToInt(),
+            valueText = "${formatHalfStepValue(settings.nextEpisodeThresholdPercent)}%",
+            minValue = 194,
+            maxValue = 200,
+            step = 1,
+            onValueChange = { value -> onUpdate { setNextEpisodeThresholdPercent(value / 2f) } }
+        )
+        NextEpisodeThresholdMode.MINUTES_BEFORE_END -> SliderSettingsItem(
+            title = stringResource(R.string.autoplay_threshold_min_title),
+            subtitle = stringResource(R.string.autoplay_threshold_pct_sub),
+            value = (settings.nextEpisodeThresholdMinutesBeforeEnd * 2f).roundToInt(),
+            valueText = "${formatHalfStepValue(settings.nextEpisodeThresholdMinutesBeforeEnd)} min",
+            minValue = 0,
+            maxValue = 7,
+            step = 1,
+            onValueChange = { value -> onUpdate { setNextEpisodeThresholdMinutesBeforeEnd(value / 2f) } }
+        )
+    }
+
+    if (settings.streamAutoPlayNextEpisodeEnabled) {
+        SettingsToggleRow(
+            title = stringResource(R.string.still_watching_setting_title),
+            subtitle = stringResource(R.string.still_watching_setting_sub),
+            checked = settings.stillWatchingEnabled,
+            onToggle = { onUpdate { setStillWatchingEnabled(!settings.stillWatchingEnabled) } }
+        )
+
+        if (settings.stillWatchingEnabled) {
+            SliderSettingsItem(
+                title = stringResource(R.string.still_watching_threshold_title),
+                subtitle = stringResource(R.string.still_watching_threshold_sub),
+                value = settings.stillWatchingEpisodeThreshold,
+                valueText = "${settings.stillWatchingEpisodeThreshold}",
+                minValue = 2,
+                maxValue = 6,
+                step = 1,
+                onValueChange = { threshold -> onUpdate { setStillWatchingEpisodeThreshold(threshold) } }
+            )
+        }
+    }
+
+    SettingsToggleRow(
+        title = stringResource(R.string.autoplay_prefer_binge_group),
+        subtitle = stringResource(R.string.autoplay_prefer_binge_group_sub),
+        checked = settings.streamAutoPlayPreferBingeGroupForNextEpisode,
+        onToggle = {
+            onUpdate {
+                setStreamAutoPlayPreferBingeGroupForNextEpisode(!settings.streamAutoPlayPreferBingeGroupForNextEpisode)
+            }
+        }
+    )
+
+    if (settings.streamAutoPlayPreferBingeGroupForNextEpisode) {
+        SettingsToggleRow(
+            title = stringResource(R.string.autoplay_reuse_binge_group),
+            subtitle = stringResource(R.string.autoplay_reuse_binge_group_sub),
+            checked = settings.streamAutoPlayReuseBingeGroup,
+            onToggle = { onUpdate { setStreamAutoPlayReuseBingeGroup(!settings.streamAutoPlayReuseBingeGroup) } }
+        )
+    }
+
+    SettingsToggleRow(
+        title = stringResource(R.string.autoplay_post_play_recommendations),
+        subtitle = stringResource(R.string.autoplay_post_play_recommendations_sub),
+        checked = settings.postPlayRecommendationsEnabled,
+        onToggle = { onUpdate { setPostPlayRecommendationsEnabled(!settings.postPlayRecommendationsEnabled) } }
+    )
+
+    if (settings.postPlayRecommendationsEnabled) {
+        SliderSettingsItem(
+            title = stringResource(R.string.autoplay_post_play_movie_threshold),
+            subtitle = stringResource(R.string.autoplay_post_play_movie_threshold_sub),
+            value = settings.postPlayMovieThresholdPercent,
+            valueText = "${settings.postPlayMovieThresholdPercent}%",
+            minValue = PlayerSettings.MIN_POST_PLAY_MOVIE_THRESHOLD_PERCENT,
+            maxValue = PlayerSettings.MAX_POST_PLAY_MOVIE_THRESHOLD_PERCENT,
+            step = 1,
+            onValueChange = { percent -> onUpdate { setPostPlayMovieThresholdPercent(percent) } }
+        )
+    }
+}
+
+@Composable
+private fun selectionSummary(selectedCount: Int, allLabel: String): String =
+    if (selectedCount == 0) allLabel else stringResource(R.string.autoplay_selected_count, selectedCount)
 
 private fun formatHalfStepValue(value: Float): String {
     return if (value % 1f == 0f) {
@@ -293,106 +311,71 @@ private fun formatHalfStepValue(value: Float): String {
 
 @Composable
 internal fun AutoPlaySettingsDialogs(
-    showModeDialog: Boolean,
-    showSourceDialog: Boolean,
-    showRegexDialog: Boolean,
-    showAddonSelectionDialog: Boolean,
-    showPluginSelectionDialog: Boolean,
-    showNextEpisodeThresholdModeDialog: Boolean,
-    showReuseLastLinkCacheDialog: Boolean,
-    playerSettings: PlayerSettings,
+    dialog: PlaybackDialog?,
+    settings: PlayerSettings,
     installedAddonNames: List<String>,
     enabledPluginNames: List<String>,
-    onSetMode: (StreamAutoPlayMode) -> Unit,
-    onSetSource: (StreamAutoPlaySource) -> Unit,
-    onSetNextEpisodeThresholdMode: (NextEpisodeThresholdMode) -> Unit,
-    onSetRegex: (String) -> Unit,
-    onSetSelectedAddons: (Set<String>) -> Unit,
-    onSetSelectedPlugins: (Set<String>) -> Unit,
-    onSetReuseLastLinkCacheHours: (Int) -> Unit,
-    onDismissModeDialog: () -> Unit,
-    onDismissSourceDialog: () -> Unit,
-    onDismissRegexDialog: () -> Unit,
-    onDismissAddonSelectionDialog: () -> Unit,
-    onDismissPluginSelectionDialog: () -> Unit,
-    onDismissNextEpisodeThresholdModeDialog: () -> Unit,
-    onDismissReuseLastLinkCacheDialog: () -> Unit
+    onUpdate: PlaybackSettingsUpdate,
+    onDismiss: () -> Unit
 ) {
-    if (showModeDialog) {
-        StreamAutoPlayModeDialog(
-            selectedMode = playerSettings.streamAutoPlayMode,
-            onModeSelected = {
-                onSetMode(it)
-                onDismissModeDialog()
+    when (dialog) {
+        PlaybackDialog.STREAM_AUTO_PLAY_MODE -> StreamAutoPlayModeDialog(
+            selectedMode = settings.streamAutoPlayMode,
+            onModeSelected = { mode ->
+                onUpdate { setStreamAutoPlayMode(mode) }
+                onDismiss()
             },
-            onDismiss = onDismissModeDialog
+            onDismiss = onDismiss
         )
-    }
-
-    if (showSourceDialog) {
-        StreamAutoPlaySourceDialog(
-            selectedSource = playerSettings.streamAutoPlaySource,
-            onSourceSelected = {
-                onSetSource(it)
-                onDismissSourceDialog()
+        PlaybackDialog.STREAM_AUTO_PLAY_SOURCE -> StreamAutoPlaySourceDialog(
+            selectedSource = settings.streamAutoPlaySource,
+            onSourceSelected = { source ->
+                onUpdate { setStreamAutoPlaySource(source) }
+                onDismiss()
             },
-            onDismiss = onDismissSourceDialog
+            onDismiss = onDismiss
         )
-    }
-
-    if (showRegexDialog) {
-        StreamRegexDialog(
-            initialRegex = playerSettings.streamAutoPlayRegex,
-            onSave = {
-                onSetRegex(it)
-                onDismissRegexDialog()
+        PlaybackDialog.STREAM_REGEX -> StreamRegexDialog(
+            initialRegex = settings.streamAutoPlayRegex,
+            onSave = { regex ->
+                onUpdate { setStreamAutoPlayRegex(regex) }
+                onDismiss()
             },
-            onDismiss = onDismissRegexDialog
+            onDismiss = onDismiss
         )
-    }
-
-    if (showNextEpisodeThresholdModeDialog) {
-        NextEpisodeThresholdModeDialog(
-            selectedMode = playerSettings.nextEpisodeThresholdMode,
-            onModeSelected = {
-                onSetNextEpisodeThresholdMode(it)
-                onDismissNextEpisodeThresholdModeDialog()
+        PlaybackDialog.NEXT_EPISODE_THRESHOLD_MODE -> NextEpisodeThresholdModeDialog(
+            selectedMode = settings.nextEpisodeThresholdMode,
+            onModeSelected = { mode ->
+                onUpdate { setNextEpisodeThresholdMode(mode) }
+                onDismiss()
             },
-            onDismiss = onDismissNextEpisodeThresholdModeDialog
+            onDismiss = onDismiss
         )
-    }
-
-    if (showAddonSelectionDialog) {
-        StreamAutoPlayProviderSelectionDialog(
+        PlaybackDialog.STREAM_AUTO_PLAY_ADDONS -> StreamAutoPlayProviderSelectionDialog(
             title = stringResource(R.string.autoplay_allowed_addons),
             allLabel = stringResource(R.string.autoplay_all_addons),
             items = installedAddonNames,
-            selectedItems = playerSettings.streamAutoPlaySelectedAddons,
-            onSelectionSaved = onSetSelectedAddons,
-            onDismiss = onDismissAddonSelectionDialog
+            selectedItems = settings.streamAutoPlaySelectedAddons,
+            onSelectionSaved = { selected -> onUpdate { setStreamAutoPlaySelectedAddons(selected) } },
+            onDismiss = onDismiss
         )
-    }
-
-    if (showPluginSelectionDialog) {
-        StreamAutoPlayProviderSelectionDialog(
+        PlaybackDialog.STREAM_AUTO_PLAY_PLUGINS -> StreamAutoPlayProviderSelectionDialog(
             title = stringResource(R.string.autoplay_allowed_plugins),
             allLabel = stringResource(R.string.autoplay_all_plugins),
             items = enabledPluginNames,
-            selectedItems = playerSettings.streamAutoPlaySelectedPlugins,
-            onSelectionSaved = onSetSelectedPlugins,
-            onDismiss = onDismissPluginSelectionDialog
+            selectedItems = settings.streamAutoPlaySelectedPlugins,
+            onSelectionSaved = { selected -> onUpdate { setStreamAutoPlaySelectedPlugins(selected) } },
+            onDismiss = onDismiss
         )
-    }
-
-    if (showReuseLastLinkCacheDialog) {
-        StreamReuseLastLinkCacheDurationDialog(
-            selectedHours = playerSettings.streamReuseLastLinkCacheHours,
-            onDurationSelected = {
-                onSetReuseLastLinkCacheHours(it)
-                onDismissReuseLastLinkCacheDialog()
+        PlaybackDialog.REUSE_LAST_LINK_CACHE -> StreamReuseLastLinkCacheDurationDialog(
+            selectedHours = settings.streamReuseLastLinkCacheHours,
+            onDurationSelected = { hours ->
+                onUpdate { setStreamReuseLastLinkCacheHours(hours) }
+                onDismiss()
             },
-            onDismiss = onDismissReuseLastLinkCacheDialog
+            onDismiss = onDismiss
         )
+        else -> Unit
     }
 }
 
@@ -402,105 +385,48 @@ private fun NextEpisodeThresholdModeDialog(
     onModeSelected: (NextEpisodeThresholdMode) -> Unit,
     onDismiss: () -> Unit
 ) {
-    val focusRequester = remember { FocusRequester() }
     val options = listOf(
-        Triple(
+        SettingsPickerOption(
             NextEpisodeThresholdMode.PERCENTAGE,
             stringResource(R.string.autoplay_threshold_pct),
             stringResource(R.string.autoplay_threshold_pct_desc)
         ),
-        Triple(
+        SettingsPickerOption(
             NextEpisodeThresholdMode.MINUTES_BEFORE_END,
             stringResource(R.string.autoplay_threshold_min),
             stringResource(R.string.autoplay_threshold_min_desc)
         )
     )
 
-    LaunchedEffect(Unit) {
-        focusRequester.requestFocus()
-    }
-
-    NuvioDialog(
-        onDismiss = onDismiss,
+    SettingsSingleChoiceDialog(
         title = stringResource(R.string.autoplay_threshold_mode),
+        options = options,
+        selectedValue = selectedMode,
+        onOptionSelected = onModeSelected,
+        onDismiss = onDismiss,
         width = 520.dp,
-        suppressFirstKeyUp = false
-    ) {
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .heightIn(max = 320.dp)
-        ) {
-            LazyColumn(
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-                contentPadding = androidx.compose.foundation.layout.PaddingValues(vertical = 4.dp)
-            ) {
-                items(
-                    count = options.size,
-                    key = { index -> options[index].first.name }
-                ) { index ->
-                    val (mode, title, description) = options[index]
-                    val isSelected = mode == selectedMode
-
-                    Card(
-                        onClick = { onModeSelected(mode) },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .then(if (index == 0) Modifier.focusRequester(focusRequester) else Modifier),
-                        colors = CardDefaults.colors(
-                            containerColor = if (isSelected) NuvioColors.FocusBackground else NuvioColors.BackgroundCard,
-                            focusedContainerColor = NuvioColors.FocusBackground
-                        ),
-                        shape = CardDefaults.shape(shape = androidx.compose.foundation.shape.RoundedCornerShape(10.dp)),
-                        scale = CardDefaults.scale(focusedScale = 1f)
-                    ) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(16.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = title,
-                                    color = if (isSelected) NuvioColors.Primary else NuvioColors.TextPrimary,
-                                    style = MaterialTheme.typography.bodyLarge
-                                )
-                                Spacer(modifier = Modifier.height(4.dp))
-                                Text(
-                                    text = description,
-                                    color = NuvioColors.TextSecondary,
-                                    style = MaterialTheme.typography.bodySmall
-                                )
-                            }
-                            if (isSelected) {
-                                Spacer(modifier = Modifier.width(12.dp))
-                                Icon(
-                                    imageVector = Icons.Default.Check,
-                                    contentDescription = stringResource(R.string.cd_selected),
-                                    tint = NuvioColors.Primary,
-                                    modifier = Modifier.height(20.dp)
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
+        maxHeight = 320.dp
+    )
 }
 
+@Composable
 private fun formatReuseCacheDuration(hours: Int): String {
     return when {
-        hours < 24 -> "$hours hour${if (hours == 1) "" else "s"}"
+        hours < 24 -> stringResource(
+            if (hours == 1) R.string.cache_duration_hour_one else R.string.cache_duration_hour_other,
+            hours
+        )
         hours % 24 == 0 -> {
             val days = hours / 24
-            "$days day${if (days == 1) "" else "s"}"
+            stringResource(
+                if (days == 1) R.string.cache_duration_day_one else R.string.cache_duration_day_other,
+                days
+            )
         }
         else -> {
             val days = hours / 24
             val remainingHours = hours % 24
-            "${days}d ${remainingHours}h"
+            stringResource(R.string.cache_duration_days_hours, days, remainingHours)
         }
     }
 }
@@ -511,86 +437,21 @@ private fun StreamAutoPlayModeDialog(
     onModeSelected: (StreamAutoPlayMode) -> Unit,
     onDismiss: () -> Unit
 ) {
-    val focusRequester = remember { FocusRequester() }
     val options = listOf(
-        Triple(StreamAutoPlayMode.MANUAL, stringResource(R.string.autoplay_mode_manual), stringResource(R.string.autoplay_mode_manual_desc)),
-        Triple(StreamAutoPlayMode.FIRST_STREAM, stringResource(R.string.autoplay_mode_first), stringResource(R.string.autoplay_mode_first_desc)),
-        Triple(StreamAutoPlayMode.REGEX_MATCH, stringResource(R.string.autoplay_mode_regex), stringResource(R.string.autoplay_mode_regex_desc))
+        SettingsPickerOption(StreamAutoPlayMode.MANUAL, stringResource(R.string.autoplay_mode_manual), stringResource(R.string.autoplay_mode_manual_desc)),
+        SettingsPickerOption(StreamAutoPlayMode.FIRST_STREAM, stringResource(R.string.autoplay_mode_first), stringResource(R.string.autoplay_mode_first_desc)),
+        SettingsPickerOption(StreamAutoPlayMode.REGEX_MATCH, stringResource(R.string.autoplay_mode_regex), stringResource(R.string.autoplay_mode_regex_desc))
     )
 
-    LaunchedEffect(Unit) {
-        focusRequester.requestFocus()
-    }
-
-    NuvioDialog(
-        onDismiss = onDismiss,
+    SettingsSingleChoiceDialog(
         title = stringResource(R.string.autoplay_stream_selection),
+        options = options,
+        selectedValue = selectedMode,
+        onOptionSelected = onModeSelected,
+        onDismiss = onDismiss,
         width = 460.dp,
-        suppressFirstKeyUp = false
-    ) {
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .heightIn(max = 320.dp)
-        ) {
-            LazyColumn(
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-                contentPadding = androidx.compose.foundation.layout.PaddingValues(vertical = 4.dp)
-            ) {
-                items(
-                    count = options.size,
-                    key = { index -> options[index].first.name }
-                ) { index ->
-                    val (mode, title, description) = options[index]
-                    val isSelected = mode == selectedMode
-                    var isFocused by remember { mutableStateOf(false) }
-
-                    Card(
-                        onClick = { onModeSelected(mode) },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .then(if (index == 0) Modifier.focusRequester(focusRequester) else Modifier)
-                            .onFocusChanged { isFocused = it.isFocused },
-                        colors = CardDefaults.colors(
-                            containerColor = if (isSelected) NuvioColors.FocusBackground else NuvioColors.BackgroundCard,
-                            focusedContainerColor = NuvioColors.FocusBackground
-                        ),
-                        shape = CardDefaults.shape(shape = androidx.compose.foundation.shape.RoundedCornerShape(10.dp)),
-                        scale = CardDefaults.scale(focusedScale = 1f)
-                    ) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(16.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = title,
-                                    color = if (isSelected || isFocused) NuvioColors.Primary else NuvioColors.TextPrimary,
-                                    style = MaterialTheme.typography.bodyLarge
-                                )
-                                Spacer(modifier = Modifier.height(4.dp))
-                                Text(
-                                    text = description,
-                                    color = NuvioColors.TextSecondary,
-                                    style = MaterialTheme.typography.bodySmall
-                                )
-                            }
-                            if (isSelected) {
-                                Icon(
-                                    imageVector = Icons.Default.Check,
-                                    contentDescription = stringResource(R.string.cd_selected),
-                                    tint = NuvioColors.Primary,
-                                    modifier = Modifier.height(20.dp)
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
+        maxHeight = 320.dp
+    )
 }
 
 @Composable
@@ -599,9 +460,10 @@ private fun StreamReuseLastLinkCacheDurationDialog(
     onDurationSelected: (Int) -> Unit,
     onDismiss: () -> Unit
 ) {
-    val focusRequester = remember { FocusRequester() }
     val options = listOf(
         1,
+        2,
+        3,
         6,
         12,
         24,
@@ -610,69 +472,17 @@ private fun StreamReuseLastLinkCacheDurationDialog(
         168
     )
 
-    LaunchedEffect(Unit) {
-        focusRequester.requestFocus()
-    }
-
-    NuvioDialog(
-        onDismiss = onDismiss,
+    SettingsSingleChoiceDialog(
         title = stringResource(R.string.autoplay_last_link_cache),
+        options = options.map { hours ->
+            SettingsPickerOption(hours, formatReuseCacheDuration(hours))
+        },
+        selectedValue = selectedHours,
+        onOptionSelected = onDurationSelected,
+        onDismiss = onDismiss,
         width = 420.dp,
-        suppressFirstKeyUp = false
-    ) {
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .heightIn(max = 320.dp)
-        ) {
-            LazyColumn(
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-                contentPadding = androidx.compose.foundation.layout.PaddingValues(vertical = 4.dp)
-            ) {
-                itemsIndexed(
-                    items = options,
-                    key = { _, hours -> hours }
-                ) { index, hours ->
-                    val isSelected = hours == selectedHours
-                    Card(
-                        onClick = { onDurationSelected(hours) },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .then(if (index == 0) Modifier.focusRequester(focusRequester) else Modifier),
-                        colors = CardDefaults.colors(
-                            containerColor = if (isSelected) NuvioColors.FocusBackground else NuvioColors.BackgroundCard,
-                            focusedContainerColor = NuvioColors.FocusBackground
-                        ),
-                        shape = CardDefaults.shape(shape = androidx.compose.foundation.shape.RoundedCornerShape(10.dp)),
-                        scale = CardDefaults.scale(focusedScale = 1f)
-                    ) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(14.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                text = formatReuseCacheDuration(hours),
-                                style = MaterialTheme.typography.bodyLarge,
-                                color = if (isSelected) NuvioColors.Primary else NuvioColors.TextPrimary,
-                                modifier = Modifier.weight(1f)
-                            )
-
-                            if (isSelected) {
-                                Icon(
-                                    imageVector = Icons.Default.Check,
-                                    contentDescription = stringResource(R.string.cd_selected),
-                                    tint = NuvioColors.Primary,
-                                    modifier = Modifier.height(20.dp)
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
+        maxHeight = 320.dp
+    )
 }
 
 @Composable
@@ -681,97 +491,35 @@ private fun StreamAutoPlaySourceDialog(
     onSourceSelected: (StreamAutoPlaySource) -> Unit,
     onDismiss: () -> Unit
 ) {
-    val focusRequester = remember { FocusRequester() }
     val options = listOf(
-        Triple(
+        SettingsPickerOption(
             StreamAutoPlaySource.ALL_SOURCES,
             stringResource(R.string.autoplay_scope_all),
             stringResource(R.string.autoplay_scope_all_desc)
         ),
-        Triple(
+        SettingsPickerOption(
             StreamAutoPlaySource.INSTALLED_ADDONS_ONLY,
             stringResource(R.string.autoplay_scope_addons),
             stringResource(R.string.autoplay_scope_addons_desc)
         ),
-        Triple(
+        SettingsPickerOption(
             StreamAutoPlaySource.ENABLED_PLUGINS_ONLY,
             stringResource(R.string.autoplay_scope_plugins),
             stringResource(R.string.autoplay_scope_plugins_desc)
         )
-    )
-
-    LaunchedEffect(Unit) {
-        focusRequester.requestFocus()
+    ).filter { option ->
+        AppFeaturePolicy.pluginsEnabled || option.value != StreamAutoPlaySource.ENABLED_PLUGINS_ONLY
     }
 
-    NuvioDialog(
-        onDismiss = onDismiss,
+    SettingsSingleChoiceDialog(
         title = stringResource(R.string.autoplay_scope),
+        options = options,
+        selectedValue = selectedSource,
+        onOptionSelected = onSourceSelected,
+        onDismiss = onDismiss,
         width = 520.dp,
-        suppressFirstKeyUp = false
-    ) {
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .heightIn(max = 320.dp)
-        ) {
-            LazyColumn(
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-                contentPadding = androidx.compose.foundation.layout.PaddingValues(vertical = 4.dp)
-            ) {
-                items(
-                    count = options.size,
-                    key = { index -> options[index].first.name }
-                ) { index ->
-                    val (source, title, description) = options[index]
-                    val isSelected = source == selectedSource
-
-                    Card(
-                        onClick = { onSourceSelected(source) },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .then(if (index == 0) Modifier.focusRequester(focusRequester) else Modifier),
-                        colors = CardDefaults.colors(
-                            containerColor = if (isSelected) NuvioColors.FocusBackground else NuvioColors.BackgroundCard,
-                            focusedContainerColor = NuvioColors.FocusBackground
-                        ),
-                        shape = CardDefaults.shape(shape = androidx.compose.foundation.shape.RoundedCornerShape(10.dp)),
-                        scale = CardDefaults.scale(focusedScale = 1f)
-                    ) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(16.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = title,
-                                    color = if (isSelected) NuvioColors.Primary else NuvioColors.TextPrimary,
-                                    style = MaterialTheme.typography.bodyLarge
-                                )
-                                Spacer(modifier = Modifier.height(4.dp))
-                                Text(
-                                    text = description,
-                                    color = NuvioColors.TextSecondary,
-                                    style = MaterialTheme.typography.bodySmall
-                                )
-                            }
-                            if (isSelected) {
-                                Spacer(modifier = Modifier.width(12.dp))
-                                Icon(
-                                    imageVector = Icons.Default.Check,
-                                    contentDescription = stringResource(R.string.cd_selected),
-                                    tint = NuvioColors.Primary,
-                                    modifier = Modifier.height(20.dp)
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
+        maxHeight = 320.dp
+    )
 }
 
 @Composable
@@ -787,6 +535,9 @@ private fun StreamAutoPlayProviderSelectionDialog(
         mutableStateOf(selectedItems.intersect(items.toSet()))
     }
     val focusRequester = remember { FocusRequester() }
+    val focusedItem = remember(selectedItems, items) {
+        items.firstOrNull { it in selectedItems }
+    }
 
     LaunchedEffect(Unit) {
         focusRequester.requestFocus()
@@ -805,16 +556,16 @@ private fun StreamAutoPlayProviderSelectionDialog(
             modifier = Modifier
                 .fillMaxWidth()
                 .heightIn(max = 420.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
+            verticalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.md)
         ) {
             Card(
                 onClick = { selected = emptySet() },
                 modifier = Modifier
                     .fillMaxWidth()
-                    .focusRequester(focusRequester),
+                    .then(if (focusedItem == null) Modifier.focusRequester(focusRequester) else Modifier),
                 colors = CardDefaults.colors(
-                    containerColor = if (selected.isEmpty()) NuvioColors.FocusBackground else NuvioColors.BackgroundCard,
-                    focusedContainerColor = NuvioColors.FocusBackground
+                    containerColor = if (selected.isEmpty()) NuvioTheme.colors.FocusBackground else NuvioTheme.colors.BackgroundCard,
+                    focusedContainerColor = NuvioTheme.colors.FocusBackground
                 ),
                 shape = CardDefaults.shape(shape = androidx.compose.foundation.shape.RoundedCornerShape(10.dp)),
                 scale = CardDefaults.scale(focusedScale = 1f)
@@ -827,7 +578,7 @@ private fun StreamAutoPlayProviderSelectionDialog(
                 ) {
                     Text(
                         text = allLabel,
-                        color = if (selected.isEmpty()) NuvioColors.Primary else NuvioColors.TextPrimary,
+                        color = if (selected.isEmpty()) NuvioTheme.colors.Primary else NuvioTheme.colors.TextPrimary,
                         style = MaterialTheme.typography.bodyLarge,
                         modifier = Modifier.weight(1f)
                     )
@@ -835,7 +586,7 @@ private fun StreamAutoPlayProviderSelectionDialog(
                         Icon(
                             imageVector = Icons.Default.Check,
                             contentDescription = stringResource(R.string.cd_selected),
-                            tint = NuvioColors.Primary,
+                            tint = NuvioTheme.colors.Primary,
                             modifier = Modifier.height(20.dp)
                         )
                     }
@@ -846,13 +597,13 @@ private fun StreamAutoPlayProviderSelectionDialog(
                 Text(
                     text = stringResource(R.string.autoplay_no_items),
                     style = MaterialTheme.typography.bodySmall,
-                    color = NuvioColors.TextSecondary
+                    color = NuvioTheme.colors.TextSecondary
                 )
             } else {
                 LazyColumn(
                     modifier = Modifier.heightIn(max = 300.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                    contentPadding = androidx.compose.foundation.layout.PaddingValues(vertical = 4.dp)
+                    verticalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.sm),
+                    contentPadding = androidx.compose.foundation.layout.PaddingValues(vertical = NuvioTheme.spacing.xs)
                 ) {
                     items(
                         items = items,
@@ -867,10 +618,12 @@ private fun StreamAutoPlayProviderSelectionDialog(
                                     selected + item
                                 }
                             },
-                            modifier = Modifier.fillMaxWidth(),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .then(if (item == focusedItem) Modifier.focusRequester(focusRequester) else Modifier),
                             colors = CardDefaults.colors(
-                                containerColor = if (isSelected) NuvioColors.FocusBackground else NuvioColors.BackgroundCard,
-                                focusedContainerColor = NuvioColors.FocusBackground
+                                containerColor = if (isSelected) NuvioTheme.colors.FocusBackground else NuvioTheme.colors.BackgroundCard,
+                                focusedContainerColor = NuvioTheme.colors.FocusBackground
                             ),
                             shape = CardDefaults.shape(shape = androidx.compose.foundation.shape.RoundedCornerShape(10.dp)),
                             scale = CardDefaults.scale(focusedScale = 1f)
@@ -883,7 +636,7 @@ private fun StreamAutoPlayProviderSelectionDialog(
                             ) {
                                 Text(
                                     text = item,
-                                    color = if (isSelected) NuvioColors.Primary else NuvioColors.TextPrimary,
+                                    color = if (isSelected) NuvioTheme.colors.Primary else NuvioTheme.colors.TextPrimary,
                                     style = MaterialTheme.typography.bodyMedium,
                                     modifier = Modifier.weight(1f)
                                 )
@@ -891,7 +644,7 @@ private fun StreamAutoPlayProviderSelectionDialog(
                                     Icon(
                                         imageVector = Icons.Default.Check,
                                         contentDescription = stringResource(R.string.cd_selected),
-                                        tint = NuvioColors.Primary,
+                                        tint = NuvioTheme.colors.Primary,
                                         modifier = Modifier.height(18.dp)
                                     )
                                 }
@@ -916,21 +669,38 @@ private fun StreamRegexDialog(
     var isInputFocused by remember { mutableStateOf(false) }
     val inputFocusRequester = remember { FocusRequester() }
     val keyboardController = LocalSoftwareKeyboardController.current
-    val presets = remember {
+    val presetAny1080p = stringResource(R.string.autoplay_regex_preset_any_1080p_plus)
+    val preset4kRemux = stringResource(R.string.autoplay_regex_preset_4k_remux)
+    val preset1080pStandard = stringResource(R.string.autoplay_regex_preset_1080p_standard)
+    val preset720pSmaller = stringResource(R.string.autoplay_regex_preset_720p_smaller)
+    val presetWebSources = stringResource(R.string.autoplay_regex_preset_web_sources)
+    val presetBlurayQuality = stringResource(R.string.autoplay_regex_preset_bluray_quality)
+    val presetHevcX265 = stringResource(R.string.autoplay_regex_preset_hevc_x265)
+    val presetAvcX264 = stringResource(R.string.autoplay_regex_preset_avc_x264)
+    val presetHdrDv = stringResource(R.string.autoplay_regex_preset_hdr_dolby_vision)
+    val presetDolbyAtmosDts = stringResource(R.string.autoplay_regex_preset_dolby_atmos_dts)
+    val presetEnglish = stringResource(R.string.autoplay_regex_preset_english)
+    val presetNoCamTs = stringResource(R.string.autoplay_regex_preset_no_cam_ts)
+    val presetNoRemuxHdr = stringResource(R.string.autoplay_regex_preset_no_remux_hdr)
+    val presets = remember(
+        presetAny1080p, preset4kRemux, preset1080pStandard, preset720pSmaller,
+        presetWebSources, presetBlurayQuality, presetHevcX265, presetAvcX264,
+        presetHdrDv, presetDolbyAtmosDts, presetEnglish, presetNoCamTs, presetNoRemuxHdr
+    ) {
         listOf(
-            "Any 1080p+" to "(2160p|4k|1080p)",
-            "4K / Remux" to "(2160p|4k|remux)",
-            "1080p Standard" to "(1080p|full\\s*hd)",
-            "720p / Smaller" to "(720p|webrip|web-dl)",
-            "WEB Sources" to "(web[-\\s]?dl|webrip)",
-            "BluRay Quality" to "(bluray|b[dr]rip|remux)",
-            "HEVC / x265" to "(hevc|x265|h\\.265)",
-            "AVC / x264" to "(x264|h\\.264|avc)",
-            "HDR / Dolby Vision" to "(hdr|hdr10\\+?|dv|dolby\\s*vision)",
-            "Dolby Atmos / DTS" to "(atmos|truehd|dts[-\\s]?hd|dtsx?)",
-            "English" to "(\\beng\\b|english)",
-            "No CAM/TS" to "^(?!.*\\b(cam|hdcam|ts|telesync)\\b).*$",
-            "No REMUX/HDR" to "(?is)^(?!.*\\b(hdr|hdr10|dv|dolby|vision|hevc|remux|2160p)\\b).+$"
+            presetAny1080p to "(2160p|4k|1080p)",
+            preset4kRemux to "(2160p|4k|remux)",
+            preset1080pStandard to "(1080p|full\\s*hd)",
+            preset720pSmaller to "(720p|webrip|web-dl)",
+            presetWebSources to "(web[-\\s]?dl|webrip)",
+            presetBlurayQuality to "(bluray|b[dr]rip|remux)",
+            presetHevcX265 to "(hevc|x265|h\\.265)",
+            presetAvcX264 to "(x264|h\\.264|avc)",
+            presetHdrDv to "(hdr|hdr10\\+?|dv|dolby\\s*vision)",
+            presetDolbyAtmosDts to "(atmos|truehd|dts[-\\s]?hd|dtsx?)",
+            presetEnglish to "(\\beng\\b|english)",
+            presetNoCamTs to "^(?!.*\\b(cam|hdcam|ts|telesync)\\b).*$",
+            presetNoRemuxHdr to "(?is)^(?!.*\\b(hdr|hdr10|dv|dolby|vision|hevc|remux|2160p)\\b).+$"
         )
     }
 
@@ -953,33 +723,45 @@ private fun StreamRegexDialog(
             Column(
                 modifier = Modifier
                     .fillMaxWidth(),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
+                verticalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.md)
             ) {
                 Text(
                     text = stringResource(R.string.autoplay_regex_presets),
                     style = MaterialTheme.typography.titleSmall,
-                    color = NuvioColors.TextSecondary
+                    color = NuvioTheme.colors.TextSecondary
                 )
 
-                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    items(
+                val firstPresetFocusRequester = remember { FocusRequester() }
+                LazyRow(
+                    modifier = Modifier.settingsOptionRow(firstPresetFocusRequester),
+                    horizontalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.sm)
+                ) {
+                    itemsIndexed(
                         items = presets,
-                        key = { it.first }
-                    ) { (label, pattern) ->
+                        key = { _, preset -> preset.first }
+                    ) { presetIndex, (label, pattern) ->
                         var isFocused by remember { mutableStateOf(false) }
                         Card(
                             onClick = {
                                 regex = pattern
                                 regexError = null
                             },
-                            modifier = Modifier.onFocusChanged { isFocused = it.isFocused },
+                            modifier = Modifier
+                                .onFocusChanged { isFocused = it.isFocused }
+                                .then(
+                                    if (presetIndex == 0) {
+                                        Modifier.focusRequester(firstPresetFocusRequester)
+                                    } else {
+                                        Modifier
+                                    }
+                                ),
                             colors = CardDefaults.colors(
-                                containerColor = NuvioColors.BackgroundElevated,
-                                focusedContainerColor = NuvioColors.FocusBackground
+                                containerColor = NuvioTheme.colors.BackgroundElevated,
+                                focusedContainerColor = NuvioTheme.colors.FocusBackground
                             ),
                             border = CardDefaults.border(
                                 focusedBorder = Border(
-                                    border = BorderStroke(2.dp, NuvioColors.FocusRing),
+                                    border = NuvioTheme.focusRing.border(NuvioTheme.spacing.xxs),
                                     shape = androidx.compose.foundation.shape.RoundedCornerShape(20.dp)
                                 )
                             ),
@@ -988,9 +770,9 @@ private fun StreamRegexDialog(
                         ) {
                             Text(
                                 text = label,
-                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                                modifier = Modifier.padding(horizontal = 14.dp, vertical = NuvioTheme.spacing.sm),
                                 style = MaterialTheme.typography.labelLarge,
-                                color = if (isFocused) NuvioColors.Primary else NuvioColors.TextPrimary
+                                color = if (isFocused) NuvioTheme.colors.Primary else NuvioTheme.colors.TextPrimary
                             )
                         }
                     }
@@ -1002,23 +784,23 @@ private fun StreamRegexDialog(
                         .fillMaxWidth()
                         .onFocusChanged { isInputFocused = it.isFocused || it.hasFocus },
                     colors = CardDefaults.colors(
-                        containerColor = NuvioColors.BackgroundElevated,
-                        focusedContainerColor = NuvioColors.BackgroundElevated
+                        containerColor = NuvioTheme.colors.BackgroundElevated,
+                        focusedContainerColor = NuvioTheme.colors.BackgroundElevated
                     ),
                     border = CardDefaults.border(
                         border = Border(
-                            border = BorderStroke(1.dp, NuvioColors.Border),
+                            border = BorderStroke(NuvioTheme.spacing.hairline, NuvioTheme.colors.Border),
                             shape = androidx.compose.foundation.shape.RoundedCornerShape(10.dp)
                         ),
                         focusedBorder = Border(
-                            border = BorderStroke(2.dp, NuvioColors.FocusRing),
+                            border = NuvioTheme.focusRing.border(NuvioTheme.spacing.xxs),
                             shape = androidx.compose.foundation.shape.RoundedCornerShape(10.dp)
                         )
                     ),
                     shape = CardDefaults.shape(androidx.compose.foundation.shape.RoundedCornerShape(10.dp)),
                     scale = CardDefaults.scale(focusedScale = 1f)
                 ) {
-                    Box(modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp)) {
+                    Box(modifier = Modifier.padding(horizontal = 14.dp, vertical = NuvioTheme.spacing.md)) {
                         BasicTextField(
                             value = regex,
                             onValueChange = {
@@ -1040,14 +822,15 @@ private fun StreamRegexDialog(
                             keyboardActions = KeyboardActions(
                                 onDone = { keyboardController?.hide() }
                             ),
-                            textStyle = MaterialTheme.typography.bodyMedium.copy(color = NuvioColors.TextPrimary),
-                            cursorBrush = SolidColor(if (isInputFocused) NuvioColors.Primary else Color.Transparent),
+                            textStyle = MaterialTheme.typography.bodyMedium.copy(color = NuvioTheme.colors.TextPrimary,
+                                            textDirection = TextDirection.Content),
+                            cursorBrush = SolidColor(if (isInputFocused) NuvioTheme.colors.Primary else Color.Transparent),
                             decorationBox = { innerTextField ->
                                 if (regex.isBlank()) {
                                     Text(
                                         text = "4K|2160p|Remux",
                                         style = MaterialTheme.typography.bodyMedium,
-                                        color = NuvioColors.TextTertiary
+                                        color = NuvioTheme.colors.TextTertiary
                                     )
                                 }
                                 innerTextField()
@@ -1059,7 +842,7 @@ private fun StreamRegexDialog(
                 if (regexError != null) {
                     Text(
                         text = regexError ?: "",
-                        color = NuvioColors.Error,
+                        color = NuvioTheme.colors.Error,
                         style = MaterialTheme.typography.bodySmall
                     )
                 }
@@ -1071,32 +854,32 @@ private fun StreamRegexDialog(
                     Button(
                         onClick = onDismiss,
                         colors = ButtonDefaults.colors(
-                            containerColor = NuvioColors.BackgroundElevated,
-                            contentColor = NuvioColors.TextPrimary,
-                            focusedContainerColor = NuvioColors.FocusBackground,
-                            focusedContentColor = NuvioColors.Primary
+                            containerColor = NuvioTheme.colors.BackgroundElevated,
+                            contentColor = NuvioTheme.colors.TextPrimary,
+                            focusedContainerColor = NuvioTheme.colors.FocusBackground,
+                            focusedContentColor = NuvioTheme.colors.Primary
                         ),
                         shape = ButtonDefaults.shape(androidx.compose.foundation.shape.RoundedCornerShape(10.dp))
                     ) {
                         Text(stringResource(R.string.action_cancel))
                     }
-                    Spacer(modifier = Modifier.width(8.dp))
+                    Spacer(modifier = Modifier.width(NuvioTheme.spacing.sm))
                     Button(
                         onClick = {
                             regex = ""
                             regexError = null
                         },
                         colors = ButtonDefaults.colors(
-                            containerColor = NuvioColors.BackgroundElevated,
-                            contentColor = NuvioColors.TextPrimary,
-                            focusedContainerColor = NuvioColors.FocusBackground,
-                            focusedContentColor = NuvioColors.Primary
+                            containerColor = NuvioTheme.colors.BackgroundElevated,
+                            contentColor = NuvioTheme.colors.TextPrimary,
+                            focusedContainerColor = NuvioTheme.colors.FocusBackground,
+                            focusedContentColor = NuvioTheme.colors.Primary
                         ),
                         shape = ButtonDefaults.shape(androidx.compose.foundation.shape.RoundedCornerShape(10.dp))
                     ) {
                         Text(stringResource(R.string.action_none))
                     }
-                    Spacer(modifier = Modifier.width(8.dp))
+                    Spacer(modifier = Modifier.width(NuvioTheme.spacing.sm))
                     Button(
                         onClick = {
                             val value = regex.trim()
@@ -1110,10 +893,10 @@ private fun StreamRegexDialog(
                             onSave(value)
                         },
                         colors = ButtonDefaults.colors(
-                            containerColor = NuvioColors.BackgroundCard,
-                            contentColor = NuvioColors.TextPrimary,
-                            focusedContainerColor = NuvioColors.FocusBackground,
-                            focusedContentColor = NuvioColors.Primary
+                            containerColor = NuvioTheme.colors.BackgroundCard,
+                            contentColor = NuvioTheme.colors.TextPrimary,
+                            focusedContainerColor = NuvioTheme.colors.FocusBackground,
+                            focusedContentColor = NuvioTheme.colors.Primary
                         ),
                         shape = ButtonDefaults.shape(androidx.compose.foundation.shape.RoundedCornerShape(10.dp))
                     ) {

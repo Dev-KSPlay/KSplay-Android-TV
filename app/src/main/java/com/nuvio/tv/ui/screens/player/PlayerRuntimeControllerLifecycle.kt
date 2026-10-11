@@ -2,18 +2,25 @@ package com.nuvio.tv.ui.screens.player
 
 import android.content.Intent
 import android.media.audiofx.AudioEffect
+import kotlinx.coroutines.flow.update
 
 internal fun PlayerRuntimeController.releasePlayer() {
     releasePlayer(flushPlaybackState = true)
 }
 
 internal fun PlayerRuntimeController.releasePlayer(flushPlaybackState: Boolean) {
+    logScrobbleDiagnostic("release_player", "flushPlaybackState=$flushPlaybackState")
     isReleasingPlayer = true
+    com.nuvio.tv.core.recommendations.TvRecommendationManager.isPlaybackActive.value = false
     if (flushPlaybackState) {
+        stopTorrentStream()
         flushPlaybackSnapshotForSwitchOrExit()
     }
 
     notifyAudioSessionUpdate(false)
+    unregisterAudioDelayRouteCallback()
+    audioRouteChangeJob?.cancel()
+    audioRouteChangeJob = null
 
     try {
         currentMediaSession?.release()
@@ -22,27 +29,62 @@ internal fun PlayerRuntimeController.releasePlayer(flushPlaybackState: Boolean) 
         e.printStackTrace()
     }
     progressJob?.cancel()
+    mpvTrackRefreshJob?.cancel()
+    mpvTrackRefreshJob = null
+    mpvTrackRefreshInProgress = false
     hideControlsJob?.cancel()
     watchProgressSaveJob?.cancel()
     seekProgressSyncJob?.cancel()
+    seekSourceLogJob?.cancel()
+    seekSourceLogJob = null
     frameRateProbeJob?.cancel()
+    cancelAfrPreflight()
     hideStreamSourceIndicatorJob?.cancel()
+    hideStreamSourceIndicatorJob = null
+    _uiState.update { it.copy(showStreamSourceIndicator = false) }
+    hidePlayerEngineSwitchInfoJob?.cancel()
     hideSubtitleDelayOverlayJob?.cancel()
+    subtitleAutoSyncLoadJob?.cancel()
+    cancelAutomaticSubtitleSync() // AutoSync hook
+    stopSidecarAddonSubtitle(clearView = true)
+    subtitleTimingRefreshJob?.cancel()
+    subtitleTimingRefreshJob = null
     playbackPreparationJob?.cancel()
     playbackPreparationJob = null
+    traktMappingJob?.cancel()
+    traktMappingJob = null
+    delayMpvResumeSeekUntilVideoTrack = false
+    mpvMediaLoadPrepared = false
     nextEpisodeAutoPlayJob?.cancel()
     nextEpisodeAutoPlayJob = null
+    cancelNextEpisodePreload()
+    debridResolveJob?.cancel()
+    debridResolveJob = null
+    stillWatchingPromptJob?.cancel()
+    stillWatchingPromptJob = null
     errorRetryJob?.cancel()
     errorRetryJob = null
+    stableProgressResetJob?.cancel()
+    stableProgressResetJob = null
+    mpvStableProgressResetJob?.cancel()
+    mpvStableProgressResetJob = null
+    releaseMpvPlayer()
     _exoPlayer?.let { player ->
         runCatching { player.playWhenReady = false }
         runCatching { player.pause() }
-        runCatching { player.clearVideoSurface() }
         runCatching { player.stop() }
+        runCatching { player.clearMediaItems() }
+        runCatching { player.clearVideoSurface() }
         runCatching { player.release() }
     }
     _exoPlayer = null
-    playbackSpeedAwareAudioOutputProvider = null
+    _loadControl = null
+    currentBitrateAwareLoadControl = null
+    currentParallelChunkOverheadMb = 0
+    ffmpegAudioRenderer = null
+    updateAudioControlAvailability()
+    playbackSpeedAwareAudioSink = null
+    resetPlaybackTimeline()
     isReleasingPlayer = false
 }
 

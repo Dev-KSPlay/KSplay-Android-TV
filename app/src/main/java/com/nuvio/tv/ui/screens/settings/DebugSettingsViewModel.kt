@@ -6,7 +6,12 @@ import androidx.lifecycle.viewModelScope
 import com.nuvio.tv.R
 import com.nuvio.tv.core.auth.AuthManager
 import com.nuvio.tv.data.local.DebugSettingsDataStore
+import com.nuvio.tv.data.local.LayoutPreferenceDataStore
 import com.nuvio.tv.data.local.LibraryPreferences
+import com.nuvio.tv.data.local.PlayerSettingsDataStore
+import com.nuvio.tv.data.local.ThemeDataStore
+import com.nuvio.tv.domain.model.AppTheme
+import com.nuvio.tv.domain.model.MemberTier
 import com.nuvio.tv.domain.model.PosterShape
 import com.nuvio.tv.domain.model.SavedLibraryItem
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -23,6 +28,9 @@ import kotlin.random.Random
 @HiltViewModel
 class DebugSettingsViewModel @Inject constructor(
     private val dataStore: DebugSettingsDataStore,
+    private val layoutPreferenceDataStore: LayoutPreferenceDataStore,
+    private val playerSettingsDataStore: PlayerSettingsDataStore,
+    private val themeDataStore: ThemeDataStore,
     private val authManager: AuthManager,
     private val libraryPreferences: LibraryPreferences,
     @ApplicationContext private val context: Context
@@ -42,6 +50,22 @@ class DebugSettingsViewModel @Inject constructor(
                 _uiState.update { it.copy(syncCodeFeaturesEnabled = enabled) }
             }
         }
+        viewModelScope.launch {
+            dataStore.memberTier.collectLatest { tier ->
+                _uiState.update { it.copy(memberTier = tier) }
+            }
+        }
+        viewModelScope.launch {
+            layoutPreferenceDataStore.composeHighlighterEnabled.collectLatest { enabled ->
+                _uiState.update { it.copy(composeHighlighterEnabled = enabled) }
+            }
+        }
+        // Buffer logs state
+        viewModelScope.launch {
+            playerSettingsDataStore.playerSettings.collectLatest { settings ->
+                _uiState.update { it.copy(bufferLogsEnabled = settings.enableBufferLogs) }
+            }
+        }
     }
 
     fun onEvent(event: DebugSettingsEvent) {
@@ -52,6 +76,21 @@ class DebugSettingsViewModel @Inject constructor(
             is DebugSettingsEvent.ToggleSyncCodeFeatures -> {
                 viewModelScope.launch { dataStore.setSyncCodeFeaturesEnabled(event.enabled) }
             }
+            is DebugSettingsEvent.SelectMemberTier -> {
+                viewModelScope.launch {
+                    val shouldSelectDefaultTheme = _uiState.value.memberTier == null && event.tier != null
+                    dataStore.setMemberTier(event.tier)
+                    if (shouldSelectDefaultTheme) {
+                        themeDataStore.setTheme(AppTheme.GOLD)
+                    }
+                }
+            }
+            is DebugSettingsEvent.ToggleComposeHighlighter -> {
+                viewModelScope.launch { layoutPreferenceDataStore.setComposeHighlighterEnabled(event.enabled) }
+            }
+            is DebugSettingsEvent.ToggleBufferLogs -> {
+                viewModelScope.launch { playerSettingsDataStore.setEnableBufferLogs(event.enabled) }
+            }
             is DebugSettingsEvent.GenerateLibraryItems -> {
                 viewModelScope.launch {
                     _uiState.update { it.copy(generateLibraryLoading = true, generateLibraryResult = null) }
@@ -60,7 +99,10 @@ class DebugSettingsViewModel @Inject constructor(
                         _uiState.update {
                             it.copy(
                                 generateLibraryLoading = false,
-                                generateLibraryResult = "Added ${event.count} items to library"
+                                generateLibraryResult = context.getString(
+                                    R.string.debug_generate_library_result_added,
+                                    event.count
+                                )
                             )
                         }
                     } catch (e: Exception) {
@@ -135,6 +177,9 @@ class DebugSettingsViewModel @Inject constructor(
 data class DebugSettingsUiState(
     val accountTabEnabled: Boolean = false,
     val syncCodeFeaturesEnabled: Boolean = false,
+    val memberTier: MemberTier? = null,
+    val composeHighlighterEnabled: Boolean = false,
+    val bufferLogsEnabled: Boolean = false,
     val generateLibraryLoading: Boolean = false,
     val generateLibraryResult: String? = null,
     val signInLoading: Boolean = false,
@@ -144,6 +189,9 @@ data class DebugSettingsUiState(
 sealed class DebugSettingsEvent {
     data class ToggleAccountTab(val enabled: Boolean) : DebugSettingsEvent()
     data class ToggleSyncCodeFeatures(val enabled: Boolean) : DebugSettingsEvent()
+    data class SelectMemberTier(val tier: MemberTier?) : DebugSettingsEvent()
+    data class ToggleComposeHighlighter(val enabled: Boolean) : DebugSettingsEvent()
+    data class ToggleBufferLogs(val enabled: Boolean) : DebugSettingsEvent()
     data class GenerateLibraryItems(val count: Int) : DebugSettingsEvent()
     data class SignIn(val email: String, val password: String) : DebugSettingsEvent()
 }

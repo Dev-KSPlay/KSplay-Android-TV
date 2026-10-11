@@ -11,6 +11,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
@@ -26,16 +27,20 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
-import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.source.MergingMediaSource
+import com.nuvio.tv.core.player.LetterboxDetector
+import com.nuvio.tv.core.player.LetterboxSampler
+import com.nuvio.tv.core.player.LetterboxTracker
+import com.nuvio.tv.core.player.LocalTrailerPlayerPool
+import com.nuvio.tv.core.player.TrailerPlayerPool
 import com.nuvio.tv.data.trailer.YoutubeChunkedDataSourceFactory
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import android.view.LayoutInflater
+import android.view.TextureView
 import com.nuvio.tv.R
-import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.delay
 
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
@@ -44,6 +49,7 @@ fun TrailerPlayer(
     trailerUrl: String?,
     trailerAudioUrl: String? = null,
     isPlaying: Boolean,
+    isPaused: Boolean = false,
     onEnded: () -> Unit,
     onFirstFrameRendered: () -> Unit = {},
     muted: Boolean = false,
@@ -53,9 +59,11 @@ fun TrailerPlayer(
     onRemoteKey: (keyCode: Int, action: Int, repeatCount: Int) -> Boolean = { _, _, _ -> false },
     cropToFill: Boolean = false,
     overscanZoom: Float = 1f,
+    autoCropLetterbox: Boolean = false,
     modifier: Modifier = Modifier,
     enter: EnterTransition = fadeIn(animationSpec = tween(800)),
-    exit: ExitTransition = fadeOut(animationSpec = tween(500))
+    exit: ExitTransition = fadeOut(animationSpec = tween(500)),
+    trailerPlayerPool: TrailerPlayerPool? = null
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -74,37 +82,40 @@ fun TrailerPlayer(
         animationSpec = tween(durationMillis = 300),
         label = "trailerFirstFrameAlpha"
     )
+    val playerViewRef = remember { mutableStateOf<PlayerView?>(null) }
+    var letterboxZoom by remember(trailerUrl) { mutableFloatStateOf(1f) }
+    val letterboxZoomState = animateFloatAsState(
+        targetValue = if (autoCropLetterbox) letterboxZoom else 1f,
+        animationSpec = tween(durationMillis = 400),
+        label = "trailerLetterboxZoom"
+    )
 
-    val trailerPlayer = remember(trailerUrl, trailerAudioUrl) {
+    // Resolve pool: explicit parameter > CompositionLocal
+    val resolvedPool = trailerPlayerPool ?: LocalTrailerPlayerPool.current
+
+    // Use the shared pool instance instead of creating a new ExoPlayer per focus.
+    // The pool keeps one ExoPlayer alive across poster focus changes, eliminating
+    // the expensive create/teardown cycle that was the app-launch bottleneck.
+    val trailerPlayer = remember(trailerUrl, resolvedPool) {
         if (trailerUrl != null) {
-            val loadControl = DefaultLoadControl.Builder()
-                .setBufferDurationsMs(
-                    /* minBufferMs = */ 30_000,
-                    /* maxBufferMs = */ 120_000,
-                    /* bufferForPlaybackMs = */ 5_000,
-                    /* bufferForPlaybackAfterRebufferMs = */ 10_000
-                )
-                .build()
-            ExoPlayer.Builder(context)
-                .setLoadControl(loadControl)
-                .setVideoChangeFrameRateStrategy(C.VIDEO_CHANGE_FRAME_RATE_STRATEGY_OFF)
-                .build()
-                .apply {
-                    repeatMode = Player.REPEAT_MODE_OFF
-                    volume = if (muted) 0f else 1f
-                    videoScalingMode = if (cropToFill) {
-                        C.VIDEO_SCALING_MODE_SCALE_TO_FIT_WITH_CROPPING
-                    } else {
-                        C.VIDEO_SCALING_MODE_SCALE_TO_FIT
-                    }
-                }
+            resolvedPool?.acquire()
         } else {
             null
         }
     }
-    val releaseCalled = remember(trailerPlayer) { AtomicBoolean(false) }
 
-    LaunchedEffect(isPlaying, trailerUrl, trailerAudioUrl, muted) {
+    // Configure player settings when acquired
+    LaunchedEffect(trailerPlayer, muted, cropToFill) {
+        val player = trailerPlayer ?: return@LaunchedEffect
+        player.volume = if (muted) 0f else 1f
+        player.videoScalingMode = if (cropToFill) {
+            C.VIDEO_SCALING_MODE_SCALE_TO_FIT_WITH_CROPPING
+        } else {
+            C.VIDEO_SCALING_MODE_SCALE_TO_FIT
+        }
+    }
+
+    LaunchedEffect(isPlaying, trailerUrl, trailerAudioUrl, muted, trailerPlayer) {
         val player = trailerPlayer ?: return@LaunchedEffect
         player.volume = if (muted) 0f else 1f
         if (isPlaying && trailerUrl != null) {
@@ -121,8 +132,13 @@ fun TrailerPlayer(
             player.playWhenReady = true
         } else {
             hasRenderedFirstFrame = false
-            player.stop()
-            player.clearMediaItems()
+            player.playWhenReady = false
+            // Defer heavy stop and clear until focus settling/collapse has finished
+            delay(150)
+            if (!isPlaying) {
+                player.stop()
+                player.clearMediaItems()
+            }
         }
     }
 
@@ -133,6 +149,33 @@ fun TrailerPlayer(
         } else {
             C.VIDEO_SCALING_MODE_SCALE_TO_FIT
         }
+    }
+
+    LaunchedEffect(autoCropLetterbox, hasRenderedFirstFrame, trailerPlayer) {
+        letterboxZoom = 1f
+        if (!autoCropLetterbox || !hasRenderedFirstFrame) return@LaunchedEffect
+        val player = trailerPlayer ?: return@LaunchedEffect
+        val tracker = LetterboxTracker()
+        val sampler = LetterboxSampler()
+        try {
+            while (true) {
+                delay(LetterboxDetector.SAMPLE_INTERVAL_MS)
+                if (LetterboxDetector.isSampleWindowOver(player.currentPosition, player.duration)) break
+                if (!player.isPlaying) continue
+                val textureView = playerViewRef.value?.videoSurfaceView as? TextureView ?: continue
+                val bar = sampler.sample(textureView) ?: continue
+                letterboxZoom = tracker.onSample(bar) ?: continue
+                break
+            }
+        } finally {
+            sampler.release()
+        }
+    }
+
+    LaunchedEffect(isPaused, trailerPlayer) {
+        val player = trailerPlayer ?: return@LaunchedEffect
+        if (!isPlaying) return@LaunchedEffect
+        player.playWhenReady = !isPaused
     }
 
     LaunchedEffect(seekRequestToken, seekDeltaMs, trailerPlayer) {
@@ -159,7 +202,10 @@ fun TrailerPlayer(
         val player = trailerPlayer ?: return@DisposableEffect onDispose {}
         val listener = object : Player.Listener {
             override fun onPlaybackStateChanged(playbackState: Int) {
-                if (playbackState == Player.STATE_ENDED) {
+                if (playbackState == Player.STATE_ENDED &&
+                    currentIsPlaying &&
+                    player.playWhenReady
+                ) {
                     currentOnEnded()
                 }
             }
@@ -194,13 +240,7 @@ fun TrailerPlayer(
                     player.stop()
                     player.clearMediaItems()
                 }
-                Lifecycle.Event.ON_DESTROY -> {
-                    if (releaseCalled.compareAndSet(false, true)) {
-                        runCatching { player.stop() }
-                        runCatching { player.clearMediaItems() }
-                        runCatching { player.release() }
-                    }
-                }
+                // Do NOT release on destroy — the pool owns the lifecycle.
                 else -> Unit
             }
         }
@@ -209,11 +249,8 @@ fun TrailerPlayer(
         onDispose {
             runCatching { activityLifecycleOwner.lifecycle.removeObserver(observer) }
             runCatching { player.removeListener(listener) }
-            if (releaseCalled.compareAndSet(false, true)) {
-                runCatching { player.stop() }
-                runCatching { player.clearMediaItems() }
-                runCatching { player.release() }
-            }
+            // Only stop — never release. The pool manages the ExoPlayer lifecycle.
+            resolvedPool?.stop()
         }
     }
 
@@ -226,9 +263,10 @@ fun TrailerPlayer(
             AndroidView(
                 factory = { ctx ->
                     (LayoutInflater.from(ctx).inflate(R.layout.trailer_player_view, null) as PlayerView).apply {
+                        playerViewRef.value = this
                         player = trailerPlayer
-                        isFocusable = true
-                        isFocusableInTouchMode = true
+                        isFocusable = false
+                        isFocusableInTouchMode = false
                         setOnKeyListener { _, keyCode, event ->
                             currentOnRemoteKey(keyCode, event.action, event.repeatCount)
                         }
@@ -241,18 +279,27 @@ fun TrailerPlayer(
                     }
                 },
                 update = { view ->
+                    // Re-attach player in case it was reclaimed after yield
+                    if (view.player !== trailerPlayer) {
+                        view.player = trailerPlayer
+                    }
                     view.resizeMode = if (cropToFill) {
                         AspectRatioFrameLayout.RESIZE_MODE_ZOOM
                     } else {
                         AspectRatioFrameLayout.RESIZE_MODE_FIT
                     }
                 },
+                onRelease = { view ->
+                    playerViewRef.value = null
+                    view.player = null
+                    view.keepScreenOn = false
+                },
                 modifier = modifier
                     .clipToBounds()
                     .graphicsLayer {
                         alpha = playerAlphaState.value
-                        scaleX = zoomScale
-                        scaleY = zoomScale
+                        scaleX = zoomScale * letterboxZoomState.value
+                        scaleY = zoomScale * letterboxZoomState.value
                     }
             )
         }

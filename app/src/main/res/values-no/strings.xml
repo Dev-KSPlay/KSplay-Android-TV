@@ -50,7 +50,9 @@
     <string name="continue_watching">Fortsett å se</string>
     <string name="cw_upcoming">Kommende</string>
     <string name="cw_next_up">Neste</string>
+    <string name="cw_next_up_short">Neste</string>
     <string name="cw_new_episode">Ny episode</string>
+    <string name="cw_new_episode_short">Ny</string>
     <string name="cw_new_season">Ny sesong</string>
     <string name="cw_resume">Gjenoppta</string>
     <string name="cw_percent_watched">%1$d%% sett</string>
@@ -58,6 +60,20 @@
     <string name="cw_min_left">%1$dm igjen</string>
     <string name="cw_almost_done">Nesten ferdig</string>
     <string name="cw_airs_date">Sendinger %1$s</string>
+    <string name="cw_airs_today">Sendes i dag</string>
+    <string name="cw_airs_tomorrow">Sendes i morgen</string>
+    <plurals name="cw_airs_in_days">
+        <item quantity="one">Sendes om %d dag</item>
+        <item quantity="other">Sendes om %d dager</item>
+    </plurals>
+    <!-- Short versions for compact card styles (wide/poster) -->
+    <string name="cw_airs_date_short">%1$s</string>
+    <string name="cw_airs_today_short">I dag</string>
+    <string name="cw_airs_tomorrow_short">I morgen</string>
+    <plurals name="cw_airs_in_days_short">
+        <item quantity="one">Om %d dag</item>
+        <item quantity="other">Om %d dager</item>
+    </plurals>
     <string name="cw_action_go_to_details">Gå til detaljer</string>
     <string name="cw_action_start_from_beginning">Start fra begynnelsen</string>
     <string name="cw_action_remove">Fjern</string>
@@ -73,7 +89,7 @@
     <string name="hero_director">Regissør: %1$s</string>
     <string name="hero_writer">Skribent: %1$s</string>
     <string name="hero_play">Spill av</string>
-    <string name="hero_play_episode">Spill av S%1$d, E%2$d</string>
+    <string name="hero_play_episode">Spill av S%1$d E%2$d</string>
     <string name="hero_add_to_library">Legg til i biblioteket</string>
     <string name="hero_remove_from_library">Fjern fra biblioteket</string>
     <string name="hero_mark_watched">Merk som sett</string>
@@ -115,9 +131,9 @@
     <!-- MetaDetailsScreen -->
     <string name="detail_btn_play">Spill av</string>
     <string name="detail_btn_resume">Gjenoppta</string>
-    <string name="detail_btn_play_episode">Spill av S%1$dE%2$d</string>
-    <string name="detail_btn_resume_episode">Gjenoppta S%1$dE%2$d</string>
-    <string name="detail_btn_next_episode">Neste S%1$dE%2$d</string>
+    <string name="detail_btn_play_episode">Spill av S%1$d E%2$d</string>
+    <string name="detail_btn_resume_episode">Gjenoppta S%1$d E%2$d</string>
+    <string name="detail_btn_next_episode">Neste S%1$d E%2$d</string>
     <string name="detail_tab_cast">Forfatter og skuespillere</string>
     <string name="cast_role_creator">Forfatter</string>
     <string name="cast_role_director">Regissør</string>
@@ -155,6 +171,15 @@
     <string name="series_status_rumored">Ryktet</string>
     <string name="series_status_in_production">I produksjon</string>
     <string name="series_status_post_production">Postproduksjon</string>
+    <string name="movie_status_ended">Avsluttet</string>
+    <string name="movie_status_continuing">Pågår</string>
+    <string name="movie_status_current">Gjeldende</string>
+    <string name="movie_status_cancelled">Kansellert</string>
+    <string name="movie_status_released">Utgitt</string>
+    <string name="movie_status_planned">Planlagt</string>
+    <string name="movie_status_rumored">Ryktet</string>
+    <string name="movie_status_in_production">I produksjon</string>
+    <string name="movie_status_post_production">Postproduksjon</string>
     <string name="detail_lists_fallback">Lister</string>
     <string name="detail_lists_subtitle">Velg hvilke lister som skal inneholde denne tittelen.</string>
     <string name="action_save">Lagre</string>
@@ -191,18 +216,13 @@
 
     <!-- SettingsScreen categories -->
     <string name="settings_account">Konto</string>
-    <string name="settings_account_subtitle">Kontostatus og synkroniseringsstatus.</string>
     <string name="settings_profiles">Profiler</string>
-    <string name="settings_profiles_subtitle">Administrer brukerprofiler.</string>
     <string name="settings_layout">Oppsett</string>
-    <string name="settings_layout_subtitle">Hjemmestruktur og plakatstiler.</string>
     <string name="settings_plugins">Programtillegg</string>
-    <string name="settings_plugins_subtitle">Arkiver og leverandører.</string>
-    <string name="settings_integration">Integrasjon</string>
+    <string name="settings_plugins_subtitle">Arkiver og leverandører</string>
+    <string name="settings_integration">Integrasjoner</string>
     <string name="settings_playback">Avspilling</string>
-    <string name="settings_playback_subtitle">Spiller, undertekster og autoavspilling.</string>
-    <string name="settings_trakt_subtitle">Åpne tilkoblingsside for Trakt.</string>
-    <string name="settings_about_subtitle">Versjon og retningslinjer.</string>
+    <string name="settings_trakt_subtitle">Åpne tilkoblingsside for Trakt</string>
     <string name="settings_network">Nettverkshastighet</string>
     <string name="settings_network_subtitle">Ventetid og nedlastingsdiagnostikk</string>
     <string name="settings_advanced">Avansert</string>
@@ -221,16 +241,15 @@
     <string name="network_connection_ethernet">Ethernet</string>
     <string name="network_connection_offline">Frakoblet</string>
     <string name="settings_debug">Feilsøking</string>
-    <string name="settings_debug_subtitle">Utviklerverktøy og funksjonsflagg.</string>
-    <string name="settings_plugins_section_subtitle">Administrer lagrer, leverandører og programtilleggstilstander.</string>
-    <string name="settings_account_section_subtitle">Kontostatus og synkroniseringsstatus.</string>
+    <string name="settings_plugins_section_subtitle">Administrer lagrer, leverandører og programtilleggstilstander</string>
+    <string name="settings_account_section_subtitle">Kontostatus og synkroniseringsstatus</string>
     <string name="account_stat_addons">tillegg</string>
     <string name="account_stat_plugins">programtillegg</string>
     <string name="account_stat_library">bibliotek</string>
     <string name="account_stat_progress">progresjon</string>
     <string name="account_stat_watched">sett</string>
     <string name="settings_integrations_section">Integrasjoner</string>
-    <string name="settings_integrations_section_subtitle">Velg TMDB eller MDBList</string>
+    <string name="settings_integrations_section_subtitle">Administrer tilgjengelige integrasjoner</string>
     <string name="settings_tmdb_subtitle">Kontroller for metadataberikelse</string>
     <string name="settings_mdblist_subtitle">Eksterne vurderingsleverandører</string>
     <string name="settings_animeskip_subtitle">Tidsmerker for anime intro/outro</string>
@@ -251,7 +270,7 @@
     <string name="supporters_contributors_donate_copy">Nuvio vil forbli gratis og åpen kildekode. Hvis du vil støtte prosjektet, kan du donere for å dekke kostnadene for infrastrukturen bak det.</string>
     <string name="supporters_contributors_donate_button">Doner til Nuvio</string>
     <string name="supporters_contributors_qr_title">Skann for å donere</string>
-    <string name="supporters_contributors_qr_subtitle">Åpne lenken på telefonen din og støtt Nuvio gjennom Ko-fi.</string>
+    <string name="supporters_contributors_qr_subtitle">Åpne lenken på telefonen din for å støtte Nuvio.</string>
     <string name="supporters_contributors_qr_hint">Pek kameraet på QR-koden eller bruk knappen nedenfor.</string>
     <string name="supporters_contributors_back_button">Tilbake til detaljer</string>
     <string name="supporters_tab">Støttespillere</string>
@@ -271,8 +290,6 @@
     <string name="contributors_profile_unavailable">GitHub-profillenke utilgjengelig.</string>
 
     <!-- PlaybackSettingsSections -->
-    <string name="playback_section_general">Generelt</string>
-    <string name="playback_section_general_desc">Kjerneavspillingsatferd.</string>
     <string name="playback_loading_overlay">Lastingoverlegg</string>
     <string name="playback_loading_overlay_sub">Vis lasteskjerm til første videobilde vises.</string>
     <string name="playback_pause_overlay">Pauseoverlegg</string>
@@ -282,18 +299,11 @@
     <string name="playback_skip_intro">Hopp over intro</string>
     <string name="playback_skip_intro_sub">Bruk introdb.app for å finne introer og oppsummeringer.</string>
     <string name="playback_auto_frame_rate">Automatisk bildefrekvens</string>
-    <string name="playback_section_player">Spiller &amp; strømmevalg</string>
-    <string name="playback_section_player_desc">Spillerpreferanse, autoavspilling og kildefiltrering.</string>
-    <string name="playback_player">Spiller</string>
     <string name="playback_player_internal">Intern</string>
     <string name="playback_player_external">Ekstern</string>
     <string name="playback_player_ask">Spør hver gang</string>
-    <string name="playback_section_audio">Lyd &amp; trailer</string>
-    <string name="playback_section_audio_desc">Traileratferd og lydkontroller.</string>
     <string name="playback_section_subtitles">Undertekster</string>
     <string name="playback_section_subtitles_desc">Språk, stil og gjengivelsesmodus.</string>
-    <string name="playback_afr_open">Åpne</string>
-    <string name="playback_afr_closed">Stengt</string>
     <string name="playback_afr_off">Av</string>
     <string name="playback_afr_off_sub">Ikke endre skjermoppdateringsfrekvens.</string>
     <string name="playback_afr_on_start">Ved start</string>
@@ -324,7 +334,6 @@
     <string name="audio_decoder_priority">Dekoder prioritering</string>
     <string name="audio_tunneled">Tunnelert avspilling</string>
     <string name="audio_tunneled_sub">Lyd-/videosynkronisering på maskinvarenivå. Kan forbedre avspilling på noen Android TV-enheter</string>
-    <string name="audio_dv_sub">Kartlegg Dolby Vision-profil 7 til standard HEVC for enheter uten DV-maskinvarestøtte</string>
     <string name="audio_decoder_device_only_desc">Bruk bare innebygde maskinvaredekodere. Mest kompatibel, men kan ikke støtte alle formater.</string>
     <string name="audio_decoder_prefer_device_desc">Bruk maskinvaredekodere når tilgjengelig, fall tilbake til FFmpeg. Anbefalt for de fleste enheter.</string>
     <string name="audio_decoder_prefer_app_desc">Bruk FFmpeg-dekodere når tilgjengelig. Bedre formatstøtte, men høyere CPU-bruk.</string>
@@ -336,6 +345,10 @@
     <string name="sub_forced_lang">Tvunget</string>
     <string name="sub_preferred_lang">Foretrukket språk</string>
     <string name="sub_secondary_lang">Sekundært foretrukket språk</string>
+    <string name="sub_use_forced_subtitles">Bruk tvungne undertekster</string>
+    <string name="sub_use_forced_subtitles_desc">Foretrekk tvungne undertekster når lydspråket samsvarer med undertekstspråket; hvis de ikke er tilgjengelige, velg ingenting</string>
+    <string name="sub_show_only_preferred_languages">Vis bare foretrukne språk</string>
+    <string name="sub_show_only_preferred_languages_desc">Skjul alle andre undertekstspråk fra valglisten</string>
     <string name="sub_organization">Undertekstorganisering</string>
     <string name="sub_size">Størrelse</string>
     <string name="sub_vertical_offset">Vertikal forskyvning</string>
@@ -365,13 +378,6 @@
     <string name="sub_org_none_desc">Vis undertekster i standard tilleggsresultatrekkefølge.</string>
     <string name="sub_org_by_lang_desc">Grupper undertekster etter språk.</string>
     <string name="sub_org_by_addon_desc">Grupper undertekster etter tileggskilder.</string>
-    <string name="sub_startup_mode_title">Last undertekster fra tillegg</string>
-    <string name="sub_startup_mode_fast">Rask oppstart</string>
-    <string name="sub_startup_mode_preferred">Foretrukne språk</string>
-    <string name="sub_startup_mode_all">Alle tilleggsundertekster</string>
-    <string name="sub_startup_mode_fast_desc">Start avspilling umiddelbart. Valg av undertekst fra tillegg kan laste spilleren på nytt en gang.</string>
-    <string name="sub_startup_mode_preferred_desc">Hent undertekster fra tillegg før avspilling og legger ved foretrukne/sekundære språkspor.</string>
-    <string name="sub_startup_mode_all_desc">Hent og legger ved alle tilleggsundertekster før avspilling. Langsom oppstart.</string>
 
     <!-- PlaybackAutoPlaySettings -->
     <string name="autoplay_reuse_last_link">Bruk siste lenke på nytt</string>
@@ -481,7 +487,7 @@
     <string name="layout_trailer_muted">Spill trailer uten lyd</string>
     <string name="layout_trailer_muted_sub_preview">Dempet trailerlyd under autoavspillingsforhåndsvisning.</string>
     <string name="layout_trailer_muted_sub_expanded">Dempet trailerlyd i utvidede kort.</string>
-    <string name="layout_section_card_style">Stil for plakatkort</string>
+    <string name="layout_section_card_style">Plakatkort</string>
     <string name="layout_section_card_style_desc">Juster kortbredde og hjørneradius.</string>
     <string name="layout_open">Åpne</string>
     <string name="layout_closed">Stengt</string>
@@ -665,7 +671,7 @@
 
     <!-- ProfileSettingsContent -->
     <string name="profile_title">Profiler</string>
-    <string name="profile_subtitle">Administrer brukerprofiler for denne kontoen.</string>
+    <string name="profile_subtitle">Administrer brukerprofiler for denne kontoen</string>
     <string name="profile_manage_button">Administrer profiler</string>
     <string name="profile_manage_title">Administrer profiler</string>
     <string name="profile_manage_subtitle">Velg en profil for å redigere, bytte eller opprette en ny</string>
@@ -883,7 +889,7 @@
     <string name="pause_back_to_details">Tilbake til detaljer</string>
     <string name="pause_as_character">som %1$s</string>
 
-    <!-- NextEpisodeCardOverlay -->
+    <!-- PostPlayOverlay -->
     <string name="next_episode_label">Neste episode</string>
     <string name="next_episode_finding_source">Finner kilde…</string>
     <string name="next_episode_playing_via">Avspilles via %1$s om %2$ds</string>
@@ -961,11 +967,9 @@
 
     <!-- AuthQrSignInScreen -->
     <string name="auth_qr_title">Logg inn med QR</string>
-    <string name="auth_qr_account_login">Kontologin</string>
     <string name="auth_qr_finishing">Avslutter pålogging\u2026</string>
     <string name="auth_qr_code_label">Kode: %1$s</string>
     <string name="auth_qr_expires">Utløper om %1$s</string>
-    <string name="auth_qr_phone_hint">Bruk telefonen din for å logge inn med e-post/passord. TV forblir QR-only for raskere pålogging.</string>
     <string name="auth_qr_scan_instruction">Skann QR, godkjenn i nettleser, og kom deretter tilbake hit.</string>
     <string name="auth_qr_code_display">Kode: %1$s</string>
     <string name="auth_qr_refresh">Oppfrisk QR</string>
@@ -1103,7 +1107,6 @@
 
     <!-- PlaybackAudioSettings -->
     <string name="audio_passthrough_info">Lydgjennomgang (TrueHD, DTS, AC-3, osv.) er automatisk. Når den er koblet til en kompatibel AV-mottaker eller høyttaler via HDMI, sendes lyd som-er uten dekoding.</string>
-    <string name="audio_dv_title">DV7 – HEVC fallback</string>
 
     <!-- SidebarNavigation / MainActivity -->
     <string name="nav_home">Hjem</string>
@@ -1124,4 +1127,6 @@
     <string name="update_ignore">Ignorer</string>
     <string name="watchlist_added">Lagt til ønskelisten</string>
     <string name="watchlist_removed">Fjernet fra ønskelisten</string>
+    <string name="playback_player_auto">Automatisk (Best for innhold)</string>
+    <string name="playback_player_auto_desc">ExoPlayer for filmer og serier · MPV for anime</string>
 </resources>

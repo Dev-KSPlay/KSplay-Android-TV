@@ -50,6 +50,14 @@
     <string name="cw_min_left">Liko %1$dm</string>
     <string name="cw_almost_done">Beveik baigta</string>
     <string name="cw_airs_date">Pasirodo %1$s</string>
+    <string name="cw_airs_today">Pasirodo šiandien</string>
+    <string name="cw_airs_tomorrow">Pasirodo rytoj</string>
+    <plurals name="cw_airs_in_days">
+        <item quantity="one">Pasirodo po %d dienos</item>
+        <item quantity="few">Pasirodo po %d dienų</item>
+        <item quantity="many">Pasirodo po %d dienos</item>
+        <item quantity="other">Pasirodo po %d dienų</item>
+    </plurals>
     <string name="cw_action_go_to_details">Eiti į informaciją</string>
     <string name="cw_action_start_from_beginning">Pradėti iš pradžių</string>
     <string name="cw_action_remove">Pašalinti</string>
@@ -107,9 +115,9 @@
     <!-- MetaDetailsScreen -->
     <string name="detail_btn_play">Leisti</string>
     <string name="detail_btn_resume">Tęsti</string>
-    <string name="detail_btn_play_episode">Leisti S%1$dE%2$d</string>
-    <string name="detail_btn_resume_episode">Tęsti S%1$dE%2$d</string>
-    <string name="detail_btn_next_episode">Kitas S%1$dE%2$d</string>
+    <string name="detail_btn_play_episode">Leisti S%1$d E%2$d</string>
+    <string name="detail_btn_resume_episode">Tęsti S%1$d E%2$d</string>
+    <string name="detail_btn_next_episode">Kitas S%1$d E%2$d</string>
     <string name="detail_tab_cast">Kūrėjai ir aktoriai</string>
     <string name="cast_role_creator">Kūrėjas</string>
     <string name="cast_role_director">Režisierius</string>
@@ -128,6 +136,15 @@
     <string name="series_status_rumored">Sklinda gandai</string>
     <string name="series_status_in_production">Gaminamas</string>
     <string name="series_status_post_production">Po gamybos (Post Production)</string>
+    <string name="movie_status_ended">Baigtas</string>
+    <string name="movie_status_continuing">Tęsiamas</string>
+    <string name="movie_status_current">Dabartinis</string>
+    <string name="movie_status_cancelled">Atšauktas</string>
+    <string name="movie_status_released">Išleistas</string>
+    <string name="movie_status_planned">Planuojamas</string>
+    <string name="movie_status_rumored">Sklinda gandai</string>
+    <string name="movie_status_in_production">Gaminamas</string>
+    <string name="movie_status_post_production">Po gamybos (Post Production)</string>
     <string name="detail_lists_fallback">Sąrašai</string>
     <string name="detail_lists_subtitle">Pasirinkite, į kuriuos sąrašus įtraukti šį pavadinimą.</string>
     <string name="action_save">Išsaugoti</string>
@@ -164,29 +181,23 @@
 
     <!-- SettingsScreen categories -->
     <string name="settings_account">Paskyra</string>
-    <string name="settings_account_subtitle">Paskyros ir sinchronizavimo būsena.</string>
     <string name="settings_profiles">Profiliai</string>
-    <string name="settings_profiles_subtitle">Valdyti naudotojų profilius.</string>
     <string name="settings_layout">Išdėstymas</string>
-    <string name="settings_layout_subtitle">Pradinio ekrano struktūra ir plakatų stiliai.</string>
     <string name="settings_plugins">Įskiepiai</string>
-    <string name="settings_plugins_subtitle">Repozitorijos ir teikėjai.</string>
-    <string name="settings_integration">Integracija</string>
+    <string name="settings_plugins_subtitle">Repozitorijos ir teikėjai</string>
+    <string name="settings_integration">Integracijos</string>
     <string name="settings_playback">Atkūrimas</string>
-    <string name="settings_playback_subtitle">Grotuvas, subtitrai ir automatinis paleidimas.</string>
-    <string name="settings_trakt_subtitle">Atidaryti „Trakt“ ryšio ekraną.</string>
-    <string name="settings_about_subtitle">Versija ir politika.</string>
+    <string name="settings_trakt_subtitle">Atidaryti „Trakt“ ryšio ekraną</string>
     <string name="settings_debug">Derinimas (Debug)</string>
-    <string name="settings_debug_subtitle">Kūrėjo įrankiai ir funkcijų vėliavėlės.</string>
-    <string name="settings_plugins_section_subtitle">Valdyti repozitorijas, teikėjus ir įskiepių būsenas.</string>
-    <string name="settings_account_section_subtitle">Paskyros ir sinchronizavimo būsena.</string>
+    <string name="settings_plugins_section_subtitle">Valdyti repozitorijas, teikėjus ir įskiepių būsenas</string>
+    <string name="settings_account_section_subtitle">Paskyros ir sinchronizavimo būsena</string>
     <string name="account_stat_addons">priedai</string>
     <string name="account_stat_plugins">įskiepiai</string>
     <string name="account_stat_library">biblioteka</string>
     <string name="account_stat_progress">pažanga</string>
     <string name="account_stat_watched">žiūrėta</string>
     <string name="settings_integrations_section">Integracijos</string>
-    <string name="settings_integrations_section_subtitle">Pasirinkite TMDB arba MDBList</string>
+    <string name="settings_integrations_section_subtitle">Tvarkykite galimas integracijas</string>
     <string name="settings_tmdb_subtitle">Metaduomenų praturtinimo valdikliai</string>
     <string name="settings_mdblist_subtitle">Išoriniai įvertinimų teikėjai</string>
     <string name="settings_animeskip_subtitle">„Anime Skip“ intro/outro praleidimo laiko žymos</string>
@@ -207,7 +218,7 @@
     <string name="supporters_contributors_donate_copy">„Nuvio“ išliks nemokama ir atviro kodo sistema. Jei norite paremti projektą, galite padėti padengti laiką ir infrastruktūrą už jo.</string>
     <string name="supporters_contributors_donate_button">Paaukoti „Nuvio“</string>
     <string name="supporters_contributors_qr_title">Skenuoti, kad paaukotumėte</string>
-    <string name="supporters_contributors_qr_subtitle">Atidarykite nuorodą telefone ir paremkite „Nuvio“ per „Ko-fi“.</string>
+    <string name="supporters_contributors_qr_subtitle">Atidarykite nuorodą telefone ir paremkite „Nuvio“.</string>
     <string name="supporters_contributors_qr_hint">Nukreipkite kamerą į QR kodą arba naudokite žemiau esantį mygtuką.</string>
     <string name="supporters_contributors_back_button">Grįžti į informaciją</string>
     <string name="supporters_tab">Rėmėjai</string>
@@ -227,8 +238,6 @@
     <string name="contributors_profile_unavailable">„GitHub“ profilio nuoroda nepasiekiama.</string>
 
     <!-- PlaybackSettingsSections -->
-    <string name="playback_section_general">Bendra</string>
-    <string name="playback_section_general_desc">Pagrindinė atkūrimo elgsena.</string>
     <string name="playback_loading_overlay">Įkėlimo perdanga</string>
     <string name="playback_loading_overlay_sub">Rodyti įkėlimo ekraną, kol pasirodys pirmas vaizdo kadras.</string>
     <string name="playback_pause_overlay">Pristabdymo perdanga</string>
@@ -238,18 +247,11 @@
     <string name="playback_skip_intro">Praleisti Intro</string>
     <string name="playback_skip_intro_sub">Naudoti „introdb.app“ įžangų ir santraukų aptikimui.</string>
     <string name="playback_auto_frame_rate">Automatinis kadrų dažnis</string>
-    <string name="playback_section_player">Grotuvas ir srauto pasirinkimas</string>
-    <string name="playback_section_player_desc">Grotuvo nustatymai, automatinis paleidimas ir šaltinių filtravimas.</string>
-    <string name="playback_player">Grotuvas</string>
     <string name="playback_player_internal">Vidinis</string>
     <string name="playback_player_external">Išorinis</string>
     <string name="playback_player_ask">Klausti kiekvieną kartą</string>
-    <string name="playback_section_audio">Garsas ir anonsas</string>
-    <string name="playback_section_audio_desc">Anonso elgsena ir garso valdikliai.</string>
     <string name="playback_section_subtitles">Subtitrai</string>
     <string name="playback_section_subtitles_desc">Kalba, stilius ir atvaizdavimo režimas.</string>
-    <string name="playback_afr_open">Atidaryti</string>
-    <string name="playback_afr_closed">Uždaryti</string>
     <string name="playback_afr_off">Išjungta</string>
     <string name="playback_afr_off_sub">Nekeisti ekrano atnaujinimo dažnio.</string>
     <string name="playback_afr_on_start">Pradžioje</string>
@@ -280,7 +282,6 @@
     <string name="audio_decoder_priority">Dekoderio prioritetas</string>
     <string name="audio_tunneled">Tunelinis atkūrimas (Tunneled Playback)</string>
     <string name="audio_tunneled_sub">Aparatūros lygio garso / vaizdo sinchronizavimas. Gali pagerinti atkūrimą kai kuriuose „Android TV“ įrenginiuose.</string>
-    <string name="audio_dv_sub">Susieti „Dolby Vision 7“ profilį su standartiniu HEVC įrenginiams be DV aparatūros palaikymo</string>
     <string name="audio_decoder_device_only_desc">Naudoti tik integruotus aparatūros dekoderius. Labiausiai suderinama, bet gali palaikyti ne visus formatus.</string>
     <string name="audio_decoder_prefer_device_desc">Naudoti aparatūros dekoderius, kai jie prieinami, kitu atveju — FFmpeg. Rekomenduojama daugumai įrenginių.</string>
     <string name="audio_decoder_prefer_app_desc">Naudoti FFmpeg dekoderius, kai jie prieinami. Geresnis formatų palaikymas, bet didesnis CPU naudojimas.</string>
@@ -292,6 +293,10 @@
     <string name="sub_forced_lang">Priverstiniai</string>
     <string name="sub_preferred_lang">Pageidaujama kalba</string>
     <string name="sub_secondary_lang">Antrinė pageidaujama kalba</string>
+    <string name="sub_use_forced_subtitles">Naudoti priverstinius subtitrus</string>
+    <string name="sub_use_forced_subtitles_desc">Teikti pirmenybę priverstiniams subtitrams, kai garsas atitinka subtitrų kalbą; jei jų nėra, nieko nepasirinkti</string>
+    <string name="sub_show_only_preferred_languages">Rodyti tik pageidaujamas kalbas</string>
+    <string name="sub_show_only_preferred_languages_desc">Slėpti visas kitas subtitrų kalbas iš pasirinkimo sąrašo</string>
     <string name="sub_organization">Subtitrų organizavimas</string>
     <string name="sub_size">Dydis</string>
     <string name="sub_vertical_offset">Vertikalus poslinkis</string>
@@ -321,13 +326,6 @@
     <string name="sub_org_none_desc">Rodyti subtitrus numatytąja priedo rezultato tvarka.</string>
     <string name="sub_org_by_lang_desc">Grupuoti subtitrus pagal kalbą.</string>
     <string name="sub_org_by_addon_desc">Grupuoti subtitrus pagal priedą.</string>
-    <string name="sub_startup_mode_title">Priedo subtitrų įkėlimas</string>
-    <string name="sub_startup_mode_fast">Greitas paleidimas</string>
-    <string name="sub_startup_mode_preferred">Pageidaujamos kalbos</string>
-    <string name="sub_startup_mode_all">Visi priedo subtitrai</string>
-    <string name="sub_startup_mode_fast_desc">Pradėti atkūrimą nedelsiant. Pasirinkus priedo subtitrus, grotuvas gali vieną kartą persikrauti.</string>
-    <string name="sub_startup_mode_preferred_desc">Iš anksto įkelti priedų subtitrus prieš atkūrimą ir prijungti pageidaujamos/antrinės kalbos takelius.</string>
-    <string name="sub_startup_mode_all_desc">Iš anksto įkelti ir prijungti visus priedų subtitrus prieš atkūrimą. Lėčiausias paleidimas.</string>
 
     <!-- PlaybackAutoPlaySettings -->
     <string name="autoplay_reuse_last_link">Naudoti paskutinę nuorodą</string>
@@ -433,7 +431,7 @@
     <string name="layout_trailer_muted">Paleisti anonsą be garso</string>
     <string name="layout_trailer_muted_sub_preview">Nutildyti anonso garsą automatinio paleidimo peržiūros metu.</string>
     <string name="layout_trailer_muted_sub_expanded">Nutildyti anonso garsą išskleistose kortelėse.</string>
-    <string name="layout_section_card_style">Plakato kortelės stilius</string>
+    <string name="layout_section_card_style">Plakato kortelė</string>
     <string name="layout_section_card_style_desc">Reguliuoti kortelės plotį ir kampo spindulį.</string>
     <string name="layout_open">Atidaryta</string>
     <string name="layout_closed">Uždaryta</string>
@@ -601,7 +599,7 @@ Klaida: Bandomoji simuliuojama klaida — tai nėra tikras gedimas. Šaltinis gr
 
     <!-- ProfileSettingsContent -->
     <string name="profile_title">Profiliai</string>
-    <string name="profile_subtitle">Valdyti šios paskyros naudotojų profilius.</string>
+    <string name="profile_subtitle">Valdyti šios paskyros naudotojų profilius</string>
     <string name="profile_manage_button">Valdyti profilius</string>
     <string name="profile_manage_title">Valdyti profilius</string>
     <string name="profile_manage_subtitle">Pasirinkite profilį, kurį norite redaguoti, perjungti arba sukurti naują</string>
@@ -776,7 +774,7 @@ Klaida: Bandomoji simuliuojama klaida — tai nėra tikras gedimas. Šaltinis gr
     <string name="pause_back_to_details">Grįžti į informaciją</string>
     <string name="pause_as_character">kaip %1$s</string>
 
-    <!-- NextEpisodeCardOverlay -->
+    <!-- PostPlayOverlay -->
     <string name="next_episode_label">Kita serija</string>
     <string name="next_episode_finding_source">Ieškoma šaltinio…</string>
     <string name="next_episode_playing_via">Bus atkurta per %1$s po %2$ds</string>
@@ -854,11 +852,9 @@ Klaida: Bandomoji simuliuojama klaida — tai nėra tikras gedimas. Šaltinis gr
 
     <!-- AuthQrSignInScreen -->
     <string name="auth_qr_title">Prisijungti per telefoną</string>
-    <string name="auth_qr_account_login">Paskyros prisijungimas</string>
     <string name="auth_qr_finishing">Užbaigiama…</string>
     <string name="auth_qr_code_label">Skenuokite QR kodą</string>
-    <string name="auth_qr_expires">Kodas baigsis po %1$d s</string>
-    <string name="auth_qr_phone_hint">Naudokite savo telefoną sinchronizavimui</string>
+    <string name="auth_qr_expires">Kodas baigsis po %1$s</string>
     <string name="auth_qr_scan_instruction">Nukreipkite kamerą į kodą</string>
     <string name="auth_qr_code_display">QR kodo rodymas</string>
     <string name="auth_qr_refresh">Atnaujinti kodą</string>
@@ -993,7 +989,6 @@ Klaida: Bandomoji simuliuojama klaida — tai nėra tikras gedimas. Šaltinis gr
 
     <!-- PlaybackAudioSettings -->
     <string name="audio_passthrough_info">Garso pralaidumas tiesiogiai į jūsų garso sistemą</string>
-    <string name="audio_dv_title">„Dolby Vision“ apdorojimas</string>
 
     <!-- SidebarNavigation / MainActivity -->
     <string name="nav_home">Pagrindinis</string>
@@ -1011,4 +1006,6 @@ Klaida: Bandomoji simuliuojama klaida — tai nėra tikras gedimas. Šaltinis gr
     <string name="update_ignore">Ignoruoti</string>
     <string name="watchlist_added">Pridėta į žiūrėjimo sąrašą</string>
     <string name="watchlist_removed">Pašalinta iš žiūrėjimo sąrašo</string>
+    <string name="playback_player_auto">Automatiškai (Geriausia turiniui)</string>
+    <string name="playback_player_auto_desc">ExoPlayer filmams ir serialams · MPV animėms</string>
 </resources>

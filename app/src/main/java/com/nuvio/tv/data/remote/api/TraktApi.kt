@@ -17,6 +17,7 @@ import com.nuvio.tv.data.remote.dto.trakt.TraktListItemsMutationResponseDto
 import com.nuvio.tv.data.remote.dto.trakt.TraktListSummaryDto
 import com.nuvio.tv.data.remote.dto.trakt.TraktMovieDto
 import com.nuvio.tv.data.remote.dto.trakt.TraktPlaybackItemDto
+import com.nuvio.tv.data.remote.dto.trakt.TraktProminentListDto
 import com.nuvio.tv.data.remote.dto.trakt.TraktReorderListsRequestDto
 import com.nuvio.tv.data.remote.dto.trakt.TraktReorderListsResponseDto
 import com.nuvio.tv.data.remote.dto.trakt.TraktRefreshTokenRequestDto
@@ -33,6 +34,7 @@ import com.nuvio.tv.data.remote.dto.trakt.TraktUserSettingsResponseDto
 import com.nuvio.tv.data.remote.dto.trakt.TraktUserStatsResponseDto
 import com.nuvio.tv.data.remote.dto.trakt.TraktWatchedMovieItemDto
 import com.nuvio.tv.data.remote.dto.trakt.TraktWatchedShowItemDto
+import com.nuvio.tv.data.remote.dto.trakt.TraktHiddenItemDto
 import retrofit2.Response
 import retrofit2.http.Body
 import retrofit2.http.DELETE
@@ -106,20 +108,33 @@ interface TraktApi {
     suspend fun getWatched(
         @Header("Authorization") authorization: String,
         @Path("type") type: String,
-        @Query("extended") extended: String? = null
+        @Query("extended") extended: String? = null,
+        @Query("page") page: Int = 1,
+        @Query("limit") limit: Int = 250
     ): Response<List<TraktWatchedMovieItemDto>>
 
     @GET("sync/watched/shows")
     suspend fun getWatchedShows(
         @Header("Authorization") authorization: String,
-        @Query("extended") extended: String? = null
+        @Query("extended") extended: String? = null,
+        @Query("page") page: Int = 1,
+        @Query("limit") limit: Int = 250
     ): Response<List<TraktWatchedShowItemDto>>
+
+    @GET("users/hidden/{section}")
+    suspend fun getHiddenItems(
+        @Header("Authorization") authorization: String,
+        @Path("section") section: String,
+        @Query("type") type: String? = null,
+        @Query("page") page: Int = 1,
+        @Query("limit") limit: Int = 1000
+    ): Response<List<TraktHiddenItemDto>>
 
     @GET("sync/history/episodes")
     suspend fun getEpisodeHistory(
         @Header("Authorization") authorization: String,
         @Query("page") page: Int = 1,
-        @Query("limit") limit: Int = 100,
+        @Query("limit") limit: Int = 1000,
         @Query("start_at") startAt: String? = null,
         @Query("end_at") endAt: String? = null
     ): Response<List<TraktUserEpisodeHistoryItemDto>>
@@ -171,6 +186,17 @@ interface TraktApi {
         @Query("limit") limit: Int = 10
     ): Response<List<TraktCommentDto>>
 
+    @GET("shows/{id}/seasons/{season}/episodes/{episode}/comments/{sort}")
+    suspend fun getEpisodeComments(
+        @Header("Authorization") authorization: String,
+        @Path("id") id: String,
+        @Path("season") season: Int,
+        @Path("episode") episode: Int,
+        @Path("sort") sort: String = "likes",
+        @Query("page") page: Int = 1,
+        @Query("limit") limit: Int = 10
+    ): Response<List<TraktCommentDto>>
+
     @GET("movies/{id}/related")
     suspend fun getMovieRelated(
         @Header("Authorization") authorization: String? = null,
@@ -196,6 +222,50 @@ interface TraktApi {
         @Path("id") id: String,
         @Query("type") type: String
     ): Response<List<TraktSearchResultDto>>
+
+    @GET("search/list")
+    suspend fun searchLists(
+        @Header("Authorization") authorization: String? = null,
+        @Query("query") query: String,
+        @Query("extended") extended: String = "full,images",
+        @Query("page") page: Int = 1,
+        @Query("limit") limit: Int = 20
+    ): Response<List<TraktSearchResultDto>>
+
+    @GET("lists/trending")
+    suspend fun getTrendingLists(
+        @Header("Authorization") authorization: String? = null,
+        @Query("extended") extended: String = "full,images",
+        @Query("page") page: Int = 1,
+        @Query("limit") limit: Int = 20
+    ): Response<List<TraktProminentListDto>>
+
+    @GET("lists/popular")
+    suspend fun getPopularLists(
+        @Header("Authorization") authorization: String? = null,
+        @Query("extended") extended: String = "full,images",
+        @Query("page") page: Int = 1,
+        @Query("limit") limit: Int = 20
+    ): Response<List<TraktProminentListDto>>
+
+    @GET("lists/{id}")
+    suspend fun getPublicList(
+        @Header("Authorization") authorization: String? = null,
+        @Path("id") id: String,
+        @Query("extended") extended: String = "full,images"
+    ): Response<TraktListSummaryDto>
+
+    @GET("lists/{id}/items/{type}")
+    suspend fun getPublicListItems(
+        @Header("Authorization") authorization: String? = null,
+        @Path("id") id: String,
+        @Path("type") type: String,
+        @Query("extended") extended: String = "full,images",
+        @Query("page") page: Int = 1,
+        @Query("limit") limit: Int = 1000,
+        @Query("sort_by") sortBy: String? = null,
+        @Query("sort_how") sortHow: String? = null
+    ): Response<List<TraktListItemDto>>
 
     @DELETE("sync/playback/{id}")
     suspend fun deletePlayback(
@@ -249,7 +319,12 @@ interface TraktApi {
         @Header("Authorization") authorization: String,
         @Path("id") id: String,
         @Path("list_id") listId: String,
-        @Path("type") type: String
+        @Path("type") type: String,
+        @Query("extended") extended: String = "full,images",
+        @Query("page") page: Int = 1,
+        @Query("limit") limit: Int = 1000,
+        @Query("sort_by") sortBy: String? = null,
+        @Query("sort_how") sortHow: String? = null
     ): Response<List<TraktListItemDto>>
 
     @POST("users/{id}/lists/{list_id}/items")
@@ -271,7 +346,20 @@ interface TraktApi {
     @GET("sync/watchlist/{type}")
     suspend fun getWatchlist(
         @Header("Authorization") authorization: String,
-        @Path("type") type: String
+        @Path("type") type: String,
+        @Query("page") page: Int = 1,
+        @Query("limit") limit: Int = 1000
+    ): Response<List<TraktListItemDto>>
+
+    @GET("users/{id}/watchlist/{type}/{sort}")
+    suspend fun getUserWatchlist(
+        @Header("Authorization") authorization: String,
+        @Path("id") id: String,
+        @Path("type") type: String,
+        @Path("sort") sort: String = "rank",
+        @Query("extended") extended: String = "full,images",
+        @Query("page") page: Int = 1,
+        @Query("limit") limit: Int = 1000
     ): Response<List<TraktListItemDto>>
 
     @POST("sync/watchlist")

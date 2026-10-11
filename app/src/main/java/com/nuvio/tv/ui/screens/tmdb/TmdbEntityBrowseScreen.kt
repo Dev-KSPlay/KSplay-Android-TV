@@ -1,11 +1,14 @@
 package com.nuvio.tv.ui.screens.tmdb
 
+import com.nuvio.tv.ui.theme.NuvioTheme
+
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.Crossfade
 import android.graphics.Bitmap
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.gestures.BringIntoViewSpec
 import androidx.compose.foundation.gestures.LocalBringIntoViewSpec
 import androidx.compose.foundation.layout.Arrangement
@@ -24,8 +27,8 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListPrefetchStrategy
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
@@ -37,10 +40,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
-import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRestorer
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Color
@@ -58,14 +62,17 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.compose.runtime.collectAsState
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.ColorMatrix
-import coil.compose.AsyncImage
-import coil.compose.AsyncImagePainter
-import coil.compose.rememberAsyncImagePainter
-import coil.request.ImageRequest
+import coil3.compose.AsyncImage
+import coil3.compose.AsyncImagePainter
+import coil3.compose.rememberAsyncImagePainter
+import coil3.request.ImageRequest
+import coil3.request.allowHardware
+import coil3.request.crossfade
 import com.nuvio.tv.R
 import com.nuvio.tv.core.tmdb.TmdbEntityBrowseData
 import com.nuvio.tv.core.tmdb.TmdbEntityKind
@@ -79,7 +86,7 @@ import com.nuvio.tv.ui.components.GridContentCard
 import com.nuvio.tv.ui.components.LoadingIndicator
 import com.nuvio.tv.ui.components.PosterCardDefaults
 import com.nuvio.tv.ui.components.PosterCardStyle
-import com.nuvio.tv.ui.theme.NuvioColors
+import com.nuvio.tv.ui.screens.detail.requestFocusAfterFrames
 import kotlinx.coroutines.flow.distinctUntilChanged
 
 @Composable
@@ -89,6 +96,8 @@ fun TmdbEntityBrowseScreen(
     onNavigateToDetail: (itemId: String, itemType: String, addonBaseUrl: String?) -> Unit
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val watchedMovieIds by viewModel.watchedMovieIds.collectAsStateWithLifecycle()
+    val watchedSeriesIds by viewModel.watchedSeriesIds.collectAsStateWithLifecycle()
     val screenMode = when (uiState) {
         TmdbEntityBrowseUiState.Loading -> 0
         is TmdbEntityBrowseUiState.Error -> 1
@@ -100,7 +109,7 @@ fun TmdbEntityBrowseScreen(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(NuvioColors.Background)
+            .background(NuvioTheme.colors.Background)
     ) {
         Crossfade(
             targetState = screenMode,
@@ -116,7 +125,7 @@ fun TmdbEntityBrowseScreen(
                 1 -> {
                     val errorState = uiState as? TmdbEntityBrowseUiState.Error
                     ErrorState(
-                        message = errorState?.message ?: "Could not load TMDB entity",
+                        message = errorState?.message ?: stringResource(R.string.tmdb_entity_error_load),
                         onRetry = { viewModel.retry() }
                     )
                 }
@@ -126,7 +135,13 @@ fun TmdbEntityBrowseScreen(
                     TmdbEntityBrowseContent(
                         data = successState.data,
                         sourceType = viewModel.sourceType,
+                        watchedMovieIds = watchedMovieIds,
+                        watchedSeriesIds = watchedSeriesIds,
+                        posterCardCornerRadiusDp = viewModel.posterCardCornerRadiusDp.collectAsStateWithLifecycle().value,
                         onNavigateToDetail = onNavigateToDetail,
+                        onItemLongPress = { item ->
+                            viewModel.posterOptions.show(item, null)
+                        },
                         onLoadMoreRail = { mediaType, railType ->
                             viewModel.loadMoreRail(mediaType = mediaType, railType = railType)
                         }
@@ -134,6 +149,15 @@ fun TmdbEntityBrowseScreen(
                 }
             }
         }
+
+        val posterOptionsState by viewModel.posterOptions.state.collectAsStateWithLifecycle()
+        com.nuvio.tv.ui.components.posteroptions.PosterOptionsHost(
+            state = posterOptionsState,
+            controller = viewModel.posterOptions,
+            onNavigateToDetail = { id, type, addonBaseUrl ->
+                onNavigateToDetail(id, type, addonBaseUrl.takeIf { it.isNotBlank() })
+            }
+        )
     }
 }
 
@@ -142,11 +166,16 @@ fun TmdbEntityBrowseScreen(
 private fun TmdbEntityBrowseContent(
     data: TmdbEntityBrowseData,
     sourceType: String,
+    watchedMovieIds: Set<String>,
+    watchedSeriesIds: Set<String>,
+    posterCardCornerRadiusDp: Int = 12,
     onNavigateToDetail: (itemId: String, itemType: String, addonBaseUrl: String?) -> Unit,
+    onItemLongPress: (MetaPreview) -> Unit = {},
     onLoadMoreRail: (TmdbEntityMediaType, TmdbEntityRailType) -> Unit
 ) {
     val lifecycleOwner = LocalLifecycleOwner.current
     var pendingRestoreItemId by rememberSaveable(data.header.id) { mutableStateOf<String?>(null) }
+    var pendingRestoreRailKey by rememberSaveable(data.header.id) { mutableStateOf<String?>(null) }
     var restoreFocusToken by rememberSaveable(data.header.id) { mutableIntStateOf(0) }
 
     DisposableEffect(lifecycleOwner, pendingRestoreItemId) {
@@ -161,11 +190,28 @@ private fun TmdbEntityBrowseContent(
         }
     }
 
-    val posterCardStyle = PosterCardDefaults.Style
+    val posterCardStyle = PosterCardDefaults.Style.copy(
+        cornerRadius = posterCardCornerRadiusDp.dp
+    )
     val defaultBringIntoViewSpec = LocalBringIntoViewSpec.current
     val localDensity = LocalDensity.current
     val focusedItemIndexByRail = remember { mutableMapOf<String, Int>() }
+    val railFocusRequesters = remember { mutableMapOf<String, MutableMap<Int, FocusRequester>>() }
     val railListStates = remember { mutableMapOf<String, LazyListState>() }
+    val railsListState = rememberLazyListState()
+    val firstCardFocusRequester = remember(data.header.id) { FocusRequester() }
+    var initialFocusRequested by rememberSaveable(data.header.id) { mutableStateOf(false) }
+
+    // Bring the rail that owns the restored card into the column viewport before the row restore runs.
+    LaunchedEffect(restoreFocusToken, pendingRestoreRailKey, data.rails) {
+        if (restoreFocusToken <= 0 || pendingRestoreItemId == null) return@LaunchedEffect
+        val railKey = pendingRestoreRailKey ?: return@LaunchedEffect
+        val railIndex = data.rails.indexOfFirst {
+            "${it.mediaType.value}_${it.railType.value}" == railKey
+        }
+        if (railIndex < 0) return@LaunchedEffect
+        runCatching { railsListState.scrollToItem(railIndex) }
+    }
 
     val backgroundRequest = rememberBackgroundRequest(
         data = data,
@@ -193,7 +239,7 @@ private fun TmdbEntityBrowseContent(
         } else {
             // Give the list extra trailing scroll room so the last rail can settle cleanly.
             val railsTailPadding = maxHeight * 0.55f
-            val railHeaderFocusInset = 32.dp
+            val railHeaderFocusInset = NuvioTheme.spacing.xxl
             val railsBringIntoViewSpec = remember(localDensity, defaultBringIntoViewSpec) {
                 val topInsetPx = with(localDensity) { railHeaderFocusInset.toPx() }
                 @Suppress("DEPRECATION", "OVERRIDE_DEPRECATION")
@@ -212,49 +258,62 @@ private fun TmdbEntityBrowseContent(
             Column(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(top = 24.dp)
+                    .padding(top = NuvioTheme.spacing.xl)
             ) {
                 TmdbEntityHero(
                     data = data,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(bottom = 12.dp)
+                        .padding(bottom = NuvioTheme.spacing.md)
                 )
 
                 CompositionLocalProvider(LocalBringIntoViewSpec provides railsBringIntoViewSpec) {
                     LazyColumn(
+                        state = railsListState,
                         modifier = Modifier
                             .fillMaxWidth()
                             .weight(1f),
-                        contentPadding = PaddingValues(top = 8.dp, bottom = railsTailPadding),
-                        verticalArrangement = Arrangement.spacedBy(24.dp)
+                        contentPadding = PaddingValues(top = NuvioTheme.spacing.sm, bottom = railsTailPadding),
+                        verticalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.xl)
                     ) {
-                        items(
+                        itemsIndexed(
                             items = data.rails,
-                            key = { rail -> "${rail.mediaType.value}_${rail.railType.value}" }
-                        ) { rail ->
+                            key = { _, rail -> "${rail.mediaType.value}_${rail.railType.value}" }
+                        ) { railIndex, rail ->
                             val railKey = "${rail.mediaType.value}_${rail.railType.value}"
                             val rememberedFocusedIndex = focusedItemIndexByRail[railKey] ?: 0
+                            val isRestoreRail = pendingRestoreRailKey == null || pendingRestoreRailKey == railKey
                             EntityRailRow(
                                 rail = rail,
-                                rememberedFocusedIndex = rememberedFocusedIndex,
+                                initialFocusRequester = if (railIndex == 0) firstCardFocusRequester else null,
+                                shouldRequestInitialFocus = railIndex == 0 && !initialFocusRequested && pendingRestoreItemId == null,
                                 rowListState = railListStates.getOrPut(railKey) {
                                     LazyListState(
                                         firstVisibleItemIndex = rememberedFocusedIndex,
                                         prefetchStrategy = LazyListPrefetchStrategy(nestedPrefetchItemCount = 2)
                                     )
                                 },
+                                itemFocusRequesters = railFocusRequesters.getOrPut(railKey) { mutableMapOf() },
+                                rememberedFocusedIndex = rememberedFocusedIndex,
                                 posterCardStyle = posterCardStyle,
-                                restoreItemId = pendingRestoreItemId,
-                                restoreFocusToken = restoreFocusToken,
-                                onRestoreFocusHandled = { pendingRestoreItemId = null },
+                                watchedMovieIds = watchedMovieIds,
+                                watchedSeriesIds = watchedSeriesIds,
+                                restoreItemId = if (isRestoreRail) pendingRestoreItemId else null,
+                                restoreFocusToken = if (isRestoreRail) restoreFocusToken else 0,
+                                onInitialFocusHandled = { initialFocusRequested = true },
+                                onRestoreFocusHandled = {
+                                    pendingRestoreItemId = null
+                                    pendingRestoreRailKey = null
+                                },
                                 onFocusedItemIndexChanged = { focusedIndex ->
                                     focusedItemIndexByRail[railKey] = focusedIndex
                                 },
                                 onItemClick = { item ->
                                     pendingRestoreItemId = item.id
+                                    pendingRestoreRailKey = railKey
                                     onNavigateToDetail(item.id, item.apiType, null)
                                 },
+                                onItemLongPress = onItemLongPress,
                                 onLoadMore = onLoadMoreRail
                             )
                         }
@@ -298,7 +357,7 @@ private fun TmdbEntityHero(
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .padding(horizontal = 48.dp),
+            .padding(horizontal = NuvioTheme.spacing.xxxl),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween
     ) {
@@ -307,7 +366,7 @@ private fun TmdbEntityHero(
         Column(
             modifier = Modifier
                 .weight(1f)
-                .padding(end = if (hasLogo) 32.dp else 0.dp)
+                .padding(end = if (hasLogo) NuvioTheme.spacing.xxl else NuvioTheme.spacing.none)
         ) {
             Text(
                 text = entityKindLabel(data.header.kind),
@@ -315,7 +374,7 @@ private fun TmdbEntityHero(
                     fontWeight = FontWeight.Medium,
                     letterSpacing = 0.4.sp
                 ),
-                color = NuvioColors.TextSecondary
+                color = NuvioTheme.colors.TextSecondary
             )
             Spacer(modifier = Modifier.height(10.dp))
             Text(
@@ -326,7 +385,7 @@ private fun TmdbEntityHero(
                     fontWeight = FontWeight.ExtraBold,
                     letterSpacing = (-1).sp
                 ),
-                color = NuvioColors.TextPrimary,
+                color = NuvioTheme.colors.TextPrimary,
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis
             )
@@ -335,21 +394,21 @@ private fun TmdbEntityHero(
                 data.header.secondaryLabel?.takeIf { it.isNotBlank() }
             ).joinToString(" • ")
             if (metaLine.isNotBlank()) {
-                Spacer(modifier = Modifier.height(12.dp))
+                Spacer(modifier = Modifier.height(NuvioTheme.spacing.md))
                 Text(
                     text = metaLine,
                     style = MaterialTheme.typography.bodyLarge,
-                    color = NuvioColors.TextSecondary
+                    color = NuvioTheme.colors.TextSecondary
                 )
             }
             data.header.description?.takeIf { it.isNotBlank() }?.let { description ->
-                Spacer(modifier = Modifier.height(16.dp))
+                Spacer(modifier = Modifier.height(NuvioTheme.spacing.lg))
                 Text(
                     text = description,
                     style = MaterialTheme.typography.bodyLarge.copy(
                         lineHeight = 24.sp
                     ),
-                    color = NuvioColors.TextSecondary,
+                    color = NuvioTheme.colors.TextSecondary,
                     maxLines = 4,
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.fillMaxWidth(0.88f)
@@ -368,10 +427,10 @@ private fun TmdbEntityHero(
 
             // Detect dark monochrome logo and tint white if needed
             var logoColorFilter by remember { mutableStateOf<ColorFilter?>(null) }
-            val painterState = logoPainter.state
+            val painterState by logoPainter.state.collectAsState()
             LaunchedEffect(painterState) {
                 if (painterState is AsyncImagePainter.State.Success) {
-                    val bitmap = (painterState.result.drawable as? android.graphics.drawable.BitmapDrawable)?.bitmap
+                    val bitmap = ((painterState as AsyncImagePainter.State.Success).result.image as? coil3.BitmapImage)?.bitmap
                     if (bitmap != null) {
                         val isDarkMono = isLogoDarkAndMonochrome(bitmap)
                         logoColorFilter = if (isDarkMono) {
@@ -395,34 +454,61 @@ private fun TmdbEntityHero(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class, ExperimentalComposeUiApi::class)
 @Composable
 private fun EntityRailRow(
     rail: TmdbEntityRail,
-    rememberedFocusedIndex: Int,
+    initialFocusRequester: FocusRequester?,
+    shouldRequestInitialFocus: Boolean,
     rowListState: LazyListState,
+    itemFocusRequesters: MutableMap<Int, FocusRequester>,
+    rememberedFocusedIndex: Int,
     posterCardStyle: PosterCardStyle,
+    watchedMovieIds: Set<String>,
+    watchedSeriesIds: Set<String>,
     restoreItemId: String?,
     restoreFocusToken: Int,
+    onInitialFocusHandled: () -> Unit,
     onRestoreFocusHandled: () -> Unit,
     onFocusedItemIndexChanged: (Int) -> Unit,
     onItemClick: (MetaPreview) -> Unit,
+    onItemLongPress: (MetaPreview) -> Unit = {},
     onLoadMore: (TmdbEntityMediaType, TmdbEntityRailType) -> Unit
 ) {
-    val focusRequesters = remember(rail.mediaType, rail.railType) {
-        mutableMapOf<String, FocusRequester>()
-    }
-    val itemIds = remember(rail.items) { rail.items.map { it.id }.toSet() }
-    focusRequesters.keys.retainAll(itemIds)
-    val initialFocusIndex = rememberedFocusedIndex
-        .coerceIn(0, (rail.items.size - 1).coerceAtLeast(0))
+    val restoreFocusRequester = remember(rail.mediaType, rail.railType) { FocusRequester() }
+    var restorePending by remember(rail.mediaType, rail.railType) { mutableStateOf(false) }
+    val firstItemFocusRequester = initialFocusRequester
+        ?: itemFocusRequesters.getOrPut(0) { FocusRequester() }
     var lastLoadMoreRequestTotal by remember(rail.mediaType, rail.railType) { mutableIntStateOf(-1) }
 
-    LaunchedEffect(restoreItemId, restoreFocusToken) {
-        if (restoreFocusToken <= 0 || restoreItemId == null) return@LaunchedEffect
-        val requester = focusRequesters[restoreItemId] ?: return@LaunchedEffect
-        repeat(2) { withFrameNanos { } }
-        runCatching { requester.requestFocus() }
-        onRestoreFocusHandled()
+    LaunchedEffect(shouldRequestInitialFocus, firstItemFocusRequester, rail.items.firstOrNull()?.id) {
+        if (!shouldRequestInitialFocus || rail.items.isEmpty()) return@LaunchedEffect
+        val focused = firstItemFocusRequester.requestFocusAfterFrames(frames = 2)
+        if (focused) {
+            onInitialFocusHandled()
+        }
+    }
+
+    // Scroll the target card into composition, then request focus with retries.
+    // Looking up a FocusRequester that was never composed (off-screen LazyRow items)
+    // used to exit early and leave focus on a random card after Back.
+    LaunchedEffect(restoreItemId, restoreFocusToken, rail.items) {
+        if (restoreFocusToken <= 0 || restoreItemId.isNullOrBlank()) {
+            restorePending = false
+            return@LaunchedEffect
+        }
+        val targetIndex = rail.items.indexOfFirst { it.id == restoreItemId }
+        if (targetIndex < 0) {
+            restorePending = false
+            return@LaunchedEffect
+        }
+        restorePending = true
+        runCatching { rowListState.scrollToItem(targetIndex) }
+        val focused = restoreFocusRequester.requestFocusAfterFrames(frames = 2)
+        if (!focused) {
+            // One more attempt after layout settles (common after column rail scroll).
+            restoreFocusRequester.requestFocusAfterFrames(frames = 3)
+        }
     }
 
     LaunchedEffect(rail.mediaType, rail.railType, rowListState, rail.hasMore, rail.isLoading) {
@@ -454,30 +540,81 @@ private fun EntityRailRow(
             style = MaterialTheme.typography.titleLarge.copy(
                 fontWeight = FontWeight.SemiBold
             ),
-            color = NuvioColors.TextPrimary,
-            modifier = Modifier.padding(horizontal = 48.dp)
+            color = NuvioTheme.colors.TextPrimary,
+            modifier = Modifier.padding(horizontal = NuvioTheme.spacing.xxxl)
         )
-        Spacer(modifier = Modifier.height(8.dp))
-        LazyRow(
-            state = rowListState,
-            contentPadding = PaddingValues(horizontal = 48.dp),
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            itemsIndexed(
-                items = rail.items,
-                key = { _, item -> item.id }
-            ) { itemIndex, item ->
-                val requester = focusRequesters.getOrPut(item.id) { FocusRequester() }
-                GridContentCard(
-                    item = item,
-                    onClick = { onItemClick(item) },
-                    posterCardStyle = posterCardStyle,
-                    showLabel = false,
-                    focusRequester = requester,
-                    onFocused = {
-                        onFocusedItemIndexChanged(itemIndex)
+        Spacer(modifier = Modifier.height(NuvioTheme.spacing.sm))
+        val defaultBringIntoViewSpec = LocalBringIntoViewSpec.current
+        val localDensity = LocalDensity.current
+        @Suppress("DEPRECATION", "OVERRIDE_DEPRECATION")
+        val rowBringIntoViewSpec = remember(localDensity, defaultBringIntoViewSpec) {
+            val startPx = with(localDensity) { NuvioTheme.spacing.xxxl.roundToPx() }
+            object : BringIntoViewSpec {
+                override val scrollAnimationSpec: AnimationSpec<Float> =
+                    defaultBringIntoViewSpec.scrollAnimationSpec
+
+                override fun calculateScrollDistance(
+                    offset: Float,
+                    size: Float,
+                    containerSize: Float
+                ): Float {
+                    val childSize = kotlin.math.abs(size)
+                    val target = startPx.toFloat()
+                    val space = containerSize - target
+                    val leading = if (childSize <= containerSize && space < childSize) containerSize - childSize else target
+                    return offset - leading
+                }
+            }
+        }
+        CompositionLocalProvider(LocalBringIntoViewSpec provides rowBringIntoViewSpec) {
+            LazyRow(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .focusRestorer {
+                        if (restorePending) {
+                            restoreFocusRequester
+                        } else {
+                            itemFocusRequesters[rememberedFocusedIndex]
+                                ?: itemFocusRequesters[0]
+                                ?: firstItemFocusRequester
+                        }
                     }
-                )
+                    .focusGroup(),
+                state = rowListState,
+                contentPadding = PaddingValues(horizontal = NuvioTheme.spacing.xxxl),
+                horizontalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.md)
+            ) {
+                itemsIndexed(
+                    items = rail.items,
+                    key = { _, item -> item.id }
+                ) { itemIndex, item ->
+                    val isRestoreTarget = item.id == restoreItemId
+                    val requester = when {
+                        isRestoreTarget -> restoreFocusRequester
+                        itemIndex == 0 -> firstItemFocusRequester
+                        else -> itemFocusRequesters.getOrPut(itemIndex) { FocusRequester() }
+                    }
+                    GridContentCard(
+                        item = item,
+                        onClick = { onItemClick(item) },
+                        onLongPress = { onItemLongPress(item) },
+                        posterCardStyle = posterCardStyle,
+                        showLabel = true,
+                        isWatched = if (rail.mediaType == TmdbEntityMediaType.TV) {
+                            item.id in watchedSeriesIds
+                        } else {
+                            item.id in watchedMovieIds
+                        },
+                        focusRequester = requester,
+                        onFocused = {
+                            onFocusedItemIndexChanged(itemIndex)
+                            if (isRestoreTarget && restoreFocusToken > 0) {
+                                restorePending = false
+                                onRestoreFocusHandled()
+                            }
+                        }
+                    )
+                }
             }
         }
     }

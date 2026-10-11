@@ -1,29 +1,38 @@
 package com.nuvio.tv.data.repository
 
+import android.content.Context
 import android.util.Log
 import com.nuvio.tv.core.network.NetworkResult
 import com.nuvio.tv.core.network.safeApiCall
-import com.nuvio.tv.data.mapper.toDomain
+import com.nuvio.tv.core.poster.withCustomPosterUrls
+import com.nuvio.tv.data.mapper.toDomainOrNull
+import com.nuvio.tv.data.mediaserver.ServerCatalog
+import com.nuvio.tv.data.mediaserver.messageRes
+import com.nuvio.tv.data.mediaserver.serverFailure
+import com.nuvio.tv.data.local.LayoutPreferenceDataStore
 import com.nuvio.tv.data.remote.api.AddonApi
 import com.nuvio.tv.domain.model.CatalogRow
 import com.nuvio.tv.domain.model.ContentType
 import com.nuvio.tv.domain.repository.CatalogRepository
+import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
 import java.net.URLEncoder
-import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 import javax.inject.Singleton
 
 @Singleton
 class CatalogRepositoryImpl @Inject constructor(
-    private val api: AddonApi
+    @ApplicationContext private val context: Context,
+    private val api: AddonApi,
+    private val layoutPreferenceDataStore: LayoutPreferenceDataStore,
+    private val serverCatalog: ServerCatalog
 ) : CatalogRepository {
     companion object {
         private const val TAG = "CatalogRepository"
     }
-
-    private val catalogCache = ConcurrentHashMap<String, CatalogRow>()
 
     override fun getCatalog(
         addonBaseUrl: String,
@@ -35,24 +44,22 @@ class CatalogRepositoryImpl @Inject constructor(
         skip: Int,
         skipStep: Int,
         extraArgs: Map<String, String>,
-        supportsSkip: Boolean
+        supportsSkip: Boolean,
+        posterScreen: com.nuvio.tv.core.poster.CustomPosterScreen
     ): Flow<NetworkResult<CatalogRow>> = flow {
-        val cacheKey = buildCacheKey(
-            addonBaseUrl = addonBaseUrl,
-            addonId = addonId,
-            type = type,
-            catalogId = catalogId,
-            skip = skip,
-            skipStep = skipStep,
-            extraArgs = extraArgs
-        )
+        emit(NetworkResult.Loading)
 
-        // Emit cached data immediately if available
-        val cached = catalogCache[cacheKey]
-        if (cached != null) {
-            emit(NetworkResult.Success(cached))
-        } else {
-            emit(NetworkResult.Loading)
+        if (ServerCatalog.isServerAddon(addonBaseUrl)) {
+            val row = try {
+                serverCatalog.catalog(addonBaseUrl, addonId, addonName, catalogId, catalogName, type, skip, extraArgs)
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                emit(NetworkResult.Error(context.getString(error.serverFailure().messageRes())))
+                return@flow
+            }
+            emit(NetworkResult.Success(row))
+            return@flow
         }
 
         val url = buildCatalogUrl(addonBaseUrl, type, catalogId, skip, extraArgs)
@@ -61,19 +68,24 @@ class CatalogRepositoryImpl @Inject constructor(
             "Fetching catalog addonId=$addonId addonName=$addonName type=$type catalogId=$catalogId skip=$skip skipStep=$skipStep supportsSkip=$supportsSkip url=$url"
         )
 
-        when (val result = safeApiCall { api.getCatalog(url) }) {
+        when (val result = safeApiCall(context) { api.getCatalog(url) }) {
             is NetworkResult.Success -> {
-                val items = result.data.metas.map { it.toDomain() }.distinctBy { it.id }
+                val rawItemCount = result.data.metas.size
+                val posterPattern = layoutPreferenceDataStore.customPosterUrlPattern
+                    .let { flow -> flow.first() }
+                val enabledScreens = layoutPreferenceDataStore.customPosterEnabledScreens.first()
+
+                val items = result.data.metas
+                    .mapNotNull { it?.toDomainOrNull(type, addonBaseUrl) }
+                    .distinctBy { it.id }
+                    .withCustomPosterUrls(
+                        com.nuvio.tv.core.poster.patternForScreen(posterPattern, posterScreen, enabledScreens)
+                    )
                 Log.d(
                     TAG,
                     "Catalog fetch success addonId=$addonId type=$type catalogId=$catalogId items=${items.size}"
                 )
 
-                val effectiveSkipStep = if (skip == 0 && items.isNotEmpty() && items.size < skipStep) {
-                    items.size
-                } else {
-                    skipStep
-                }
                 val catalogRow = CatalogRow(
                     addonId = addonId,
                     addonName = addonName,
@@ -84,26 +96,21 @@ class CatalogRepositoryImpl @Inject constructor(
                     rawType = type,
                     items = items,
                     isLoading = false,
-                    hasMore = supportsSkip && items.isNotEmpty(),
-                    currentPage = if (effectiveSkipStep > 0) skip / effectiveSkipStep else 0,
+                    hasMore = supportsSkip && rawItemCount > 0,
+                    currentPage = if (skipStep > 0) skip / skipStep else 0,
                     supportsSkip = supportsSkip,
-                    skipStep = effectiveSkipStep
+                    skipStep = skipStep,
+                    nextSkip = if (supportsSkip && rawItemCount > 0) skip + rawItemCount else skip,
+                    extraArgs = extraArgs
                 )
-                catalogCache[cacheKey] = catalogRow
-                // Only emit fresh data if it differs from cache
-                if (cached == null || cached.items != catalogRow.items) {
-                    emit(NetworkResult.Success(catalogRow))
-                }
+                emit(NetworkResult.Success(catalogRow))
             }
             is NetworkResult.Error -> {
                 Log.w(
                     TAG,
                     "Catalog fetch failed addonId=$addonId type=$type catalogId=$catalogId code=${result.code} message=${result.message} url=$url"
                 )
-                // Only emit error if we had no cached data
-                if (cached == null) {
-                    emit(result)
-                }
+                emit(result)
             }
             NetworkResult.Loading -> { /* Already emitted */ }
         }
@@ -116,48 +123,36 @@ class CatalogRepositoryImpl @Inject constructor(
         skip: Int,
         extraArgs: Map<String, String>
     ): String {
-        val cleanBaseUrl = baseUrl.trimEnd('/')
+        val trimmedBase = baseUrl.trimEnd('/')
+        val queryStart = trimmedBase.indexOf('?')
+        val basePath = if (queryStart >= 0) trimmedBase.substring(0, queryStart).trimEnd('/') else trimmedBase
+        val baseQuery = if (queryStart >= 0) trimmedBase.substring(queryStart) else ""
 
-        if (extraArgs.isEmpty()) {
-            return if (skip > 0) {
-                "$cleanBaseUrl/catalog/$type/$catalogId/skip=$skip.json"
+        val catalogPath = if (extraArgs.isEmpty()) {
+            if (skip > 0) {
+                "$basePath/catalog/$type/$catalogId/skip=$skip.json"
             } else {
-                "$cleanBaseUrl/catalog/$type/$catalogId.json"
+                "$basePath/catalog/$type/$catalogId.json"
             }
+        } else {
+            val allArgs = LinkedHashMap<String, String>()
+            allArgs.putAll(extraArgs)
+
+            if (!allArgs.containsKey("skip") && skip > 0) {
+                allArgs["skip"] = skip.toString()
+            }
+
+            val encodedArgs = allArgs.entries.joinToString("&") { (key, value) ->
+                "${encodeArg(key)}=${encodeArg(value)}"
+            }
+
+            "$basePath/catalog/$type/$catalogId/$encodedArgs.json"
         }
 
-        val allArgs = LinkedHashMap<String, String>()
-        allArgs.putAll(extraArgs)
-
-        // For Stremio catalogs, pagination is controlled by `skip` inside extraArgs.
-        if (!allArgs.containsKey("skip") && skip > 0) {
-            allArgs["skip"] = skip.toString()
-        }
-
-        val encodedArgs = allArgs.entries.joinToString("&") { (key, value) ->
-            "${encodeArg(key)}=${encodeArg(value)}"
-        }
-
-        return "$cleanBaseUrl/catalog/$type/$catalogId/$encodedArgs.json"
+        return catalogPath + baseQuery
     }
 
     private fun encodeArg(value: String): String {
         return URLEncoder.encode(value, "UTF-8").replace("+", "%20")
-    }
-
-    private fun buildCacheKey(
-        addonBaseUrl: String,
-        addonId: String,
-        type: String,
-        catalogId: String,
-        skip: Int,
-        skipStep: Int,
-        extraArgs: Map<String, String>
-    ): String {
-        val normalizedArgs = extraArgs.entries
-            .sortedBy { it.key }
-            .joinToString("&") { "${it.key}=${it.value}" }
-        val normalizedBaseUrl = addonBaseUrl.trim().trimEnd('/').lowercase()
-        return "${normalizedBaseUrl}_${addonId}_${type}_${catalogId}_${skip}_${normalizedArgs}"
     }
 }

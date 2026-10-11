@@ -1,290 +1,198 @@
-@file:OptIn(ExperimentalTvMaterial3Api::class)
-
 package com.nuvio.tv.ui.screens.settings
 
-import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyListScope
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.Language
-import androidx.compose.material.icons.filled.PlayCircle
-import androidx.compose.material.icons.filled.Speed
-import androidx.compose.material.icons.filled.Timer
-import androidx.compose.material.icons.filled.Tune
-import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.focus.onFocusChanged
-import androidx.compose.ui.graphics.Color
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.ui.unit.dp
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.unit.dp
 import com.nuvio.tv.R
-import androidx.tv.material3.Border
-import androidx.tv.material3.Card
-import androidx.tv.material3.CardDefaults
-import androidx.tv.material3.ExperimentalTvMaterial3Api
-import androidx.tv.material3.Icon
-import androidx.tv.material3.MaterialTheme
-import androidx.tv.material3.Text
 import com.nuvio.tv.data.local.AVAILABLE_SUBTITLE_LANGUAGES
-import com.nuvio.tv.data.local.displayName
 import com.nuvio.tv.data.local.AudioLanguageOption
+import com.nuvio.tv.data.local.AudioOutputChannels
+import com.nuvio.tv.data.local.PlayerPreference
 import com.nuvio.tv.data.local.PlayerSettings
-import com.nuvio.tv.data.local.TrailerSettings
-import com.nuvio.tv.ui.components.NuvioDialog
-import com.nuvio.tv.ui.theme.NuvioColors
+import com.nuvio.tv.data.local.displayName
 
-internal fun LazyListScope.trailerAndAudioSettingsItems(
-    playerSettings: PlayerSettings,
-    trailerSettings: TrailerSettings,
-    onShowAudioLanguageDialog: () -> Unit,
-    onShowSecondaryAudioLanguageDialog: () -> Unit,
-    onShowDecoderPriorityDialog: () -> Unit,
-    onSetTrailerEnabled: (Boolean) -> Unit,
-    onSetTrailerDelaySeconds: (Int) -> Unit,
-    onSetSkipSilence: (Boolean) -> Unit,
-    onSetTunnelingEnabled: (Boolean) -> Unit,
-    onSetMapDV7ToHevc: (Boolean) -> Unit,
-    onItemFocused: () -> Unit = {},
-    enabled: Boolean = true
+@Composable
+internal fun PlaybackAudioSection(
+    settings: PlayerSettings,
+    onUpdate: PlaybackSettingsUpdate,
+    onOpenDialog: (PlaybackDialog) -> Unit
 ) {
-    item(key = "audio_trailer_section_header") {
-        Text(
-            text = stringResource(R.string.audio_trailer_section),
-            style = MaterialTheme.typography.titleMedium,
-            color = NuvioColors.TextSecondary,
-            modifier = Modifier.padding(vertical = 8.dp)
-        )
-    }
+    val enabled = settings.playerPreference != PlayerPreference.EXTERNAL
+    val isExoEngine = settings.usesExoPlayerEngine
 
-    item(key = "audio_trailer_enabled") {
-        ToggleSettingsItem(
-            icon = Icons.Default.PlayCircle,
-            title = stringResource(R.string.audio_autoplay_trailers),
-            subtitle = stringResource(R.string.audio_autoplay_trailers_sub),
-            isChecked = trailerSettings.enabled,
-            onCheckedChange = onSetTrailerEnabled,
-            onFocused = onItemFocused,
-            enabled = enabled
-        )
-    }
+    SettingsNote(text = stringResource(R.string.audio_passthrough_info))
 
-    if (trailerSettings.enabled) {
-        item(key = "audio_trailer_delay") {
-            SliderSettingsItem(
-                icon = Icons.Default.Timer,
-                title = stringResource(R.string.audio_trailer_delay),
-                value = trailerSettings.delaySeconds,
-                valueText = "${trailerSettings.delaySeconds}s",
-                minValue = 3,
-                maxValue = 15,
-                step = 1,
-                onValueChange = onSetTrailerDelaySeconds,
-                onFocused = onItemFocused,
-                enabled = enabled
-            )
-        }
-    }
+    SettingsActionRow(
+        title = stringResource(R.string.audio_preferred_lang),
+        subtitle = null,
+        value = audioLanguageLabel(settings.preferredAudioLanguage),
+        enabled = enabled,
+        onClick = { onOpenDialog(PlaybackDialog.AUDIO_LANGUAGE) }
+    )
+    SettingsActionRow(
+        title = stringResource(R.string.sub_secondary_lang),
+        subtitle = null,
+        value = secondaryAudioLanguageLabel(settings.secondaryPreferredAudioLanguage),
+        enabled = enabled,
+        onClick = { onOpenDialog(PlaybackDialog.SECONDARY_AUDIO_LANGUAGE) }
+    )
 
-    item(key = "audio_header") {
-        Spacer(modifier = Modifier.height(16.dp))
-        Text(
-            text = stringResource(R.string.audio_section),
-            style = MaterialTheme.typography.titleMedium,
-            color = NuvioColors.TextSecondary,
-            modifier = Modifier.padding(vertical = 8.dp)
-        )
-    }
-
-    item(key = "audio_passthrough_info") {
-        Text(
-            text = stringResource(R.string.audio_passthrough_info),
-            style = MaterialTheme.typography.bodySmall,
-            color = NuvioColors.TextSecondary,
-            modifier = Modifier.padding(bottom = 8.dp)
-        )
-    }
-
-    item(key = "audio_preferred_language") {
-        val audioLangName = when (playerSettings.preferredAudioLanguage) {
-            AudioLanguageOption.DEFAULT -> stringResource(R.string.audio_lang_default)
-            AudioLanguageOption.DEVICE -> stringResource(R.string.audio_lang_device)
-            else -> AVAILABLE_SUBTITLE_LANGUAGES.find {
-                it.code == playerSettings.preferredAudioLanguage
-            }?.displayName ?: playerSettings.preferredAudioLanguage
-        }
-
-        NavigationSettingsItem(
-            icon = Icons.Default.Language,
-            title = stringResource(R.string.audio_preferred_lang),
-            subtitle = audioLangName,
-            onClick = onShowAudioLanguageDialog,
-            onFocused = onItemFocused,
-            enabled = enabled
-        )
-    }
-
-    item(key = "audio_secondary_preferred_language") {
-        val secondaryAudioLangName = playerSettings.secondaryPreferredAudioLanguage?.let { code ->
-            AVAILABLE_SUBTITLE_LANGUAGES.find { it.code == code }?.displayName ?: code
-        } ?: stringResource(R.string.sub_not_set)
-
-        NavigationSettingsItem(
-            icon = Icons.Default.Language,
-            title = stringResource(R.string.sub_secondary_lang),
-            subtitle = secondaryAudioLangName,
-            onClick = onShowSecondaryAudioLanguageDialog,
-            onFocused = onItemFocused,
-            enabled = enabled
-        )
-    }
-
-    item(key = "audio_skip_silence") {
-        ToggleSettingsItem(
-            icon = Icons.Default.Speed,
+    if (isExoEngine) {
+        SettingsToggleRow(
             title = stringResource(R.string.audio_skip_silence),
             subtitle = stringResource(R.string.audio_skip_silence_sub),
-            isChecked = playerSettings.skipSilence,
-            onCheckedChange = onSetSkipSilence,
-            onFocused = onItemFocused,
+            checked = settings.skipSilence,
+            onToggle = { onUpdate { setSkipSilence(!settings.skipSilence) } },
             enabled = enabled
         )
     }
 
-    item(key = "audio_advanced_header") {
-        Spacer(modifier = Modifier.height(16.dp))
-        Text(
-            text = stringResource(R.string.audio_advanced_section),
-            style = MaterialTheme.typography.titleMedium,
-            color = NuvioColors.TextSecondary,
-            modifier = Modifier.padding(vertical = 8.dp)
+    SettingsToggleRow(
+        title = stringResource(R.string.audio_remember_delay_per_device),
+        subtitle = stringResource(R.string.audio_remember_delay_per_device_sub),
+        checked = settings.rememberAudioDelayPerDevice,
+        onToggle = { onUpdate { setRememberAudioDelayPerDevice(!settings.rememberAudioDelayPerDevice) } },
+        enabled = enabled
+    )
+
+    if (!isExoEngine) return
+
+    SettingsSectionLabel(text = stringResource(R.string.audio_advanced_section))
+    SettingsNote(text = stringResource(R.string.audio_advanced_warning), tone = SettingsNoteTone.Warning)
+
+    SettingsActionRow(
+        title = stringResource(R.string.audio_decoder_priority),
+        subtitle = null,
+        value = decoderPriorityLabel(settings.decoderPriority),
+        enabled = enabled,
+        onClick = { onOpenDialog(PlaybackDialog.DECODER_PRIORITY) }
+    )
+    SettingsToggleRow(
+        title = stringResource(R.string.audio_enable_downmix_title),
+        subtitle = stringResource(R.string.audio_enable_downmix_subtitle),
+        checked = settings.effectiveDownmixEnabled,
+        onToggle = { onUpdate { setDownmixEnabled(!settings.effectiveDownmixEnabled) } },
+        enabled = enabled && settings.isPreferAppDecoder
+    )
+    if (settings.effectiveDownmixEnabled) {
+        SettingsActionRow(
+            title = stringResource(R.string.audio_number_of_channels),
+            subtitle = null,
+            value = settings.audioOutputChannels.displayLabel,
+            enabled = enabled,
+            onClick = { onOpenDialog(PlaybackDialog.AUDIO_OUTPUT_CHANNELS) }
         )
-    }
-
-    item(key = "audio_advanced_warning") {
-        Text(
-            text = stringResource(R.string.audio_advanced_warning),
-            style = MaterialTheme.typography.bodySmall,
-            color = Color(0xFFFF9800),
-            modifier = Modifier.padding(bottom = 8.dp)
-        )
-    }
-
-    item(key = "audio_decoder_priority") {
-        val decoderName = when (playerSettings.decoderPriority) {
-            0 -> stringResource(R.string.audio_decoder_device_only)
-            1 -> stringResource(R.string.audio_decoder_prefer_device)
-            2 -> stringResource(R.string.audio_decoder_prefer_app)
-            else -> stringResource(R.string.audio_decoder_prefer_device)
-        }
-
-        NavigationSettingsItem(
-            icon = Icons.Default.Tune,
-            title = stringResource(R.string.audio_decoder_priority),
-            subtitle = decoderName,
-            onClick = onShowDecoderPriorityDialog,
-            onFocused = onItemFocused,
+        SettingsToggleRow(
+            title = stringResource(R.string.audio_maintain_original_audio_on_downmix_title),
+            subtitle = stringResource(R.string.audio_maintain_original_audio_on_downmix_subtitle),
+            checked = settings.maintainOriginalAudioOnDownmix,
+            onToggle = { onUpdate { setMaintainOriginalAudioOnDownmix(!settings.maintainOriginalAudioOnDownmix) } },
             enabled = enabled
         )
     }
+    SettingsToggleRow(
+        title = stringResource(R.string.audio_tunneled),
+        subtitle = stringResource(R.string.audio_tunneled_sub),
+        checked = settings.effectiveTunnelingEnabled,
+        onToggle = { onUpdate { setTunnelingEnabled(!settings.effectiveTunnelingEnabled) } },
+        enabled = enabled && settings.isTunnelingCompatible
+    )
+    SettingsToggleRow(
+        title = stringResource(R.string.audio_force_optical_passthrough),
+        subtitle = stringResource(R.string.audio_force_optical_passthrough_sub),
+        checked = settings.forceOpticalPassthrough && settings.decoderPriority != 0,
+        onToggle = { onUpdate { setForceOpticalPassthrough(!settings.forceOpticalPassthrough) } },
+        enabled = enabled && settings.decoderPriority != 0
+    )
+}
 
-    item(key = "audio_tunneled_playback") {
-        ToggleSettingsItem(
-            icon = Icons.Default.VolumeUp,
-            title = stringResource(R.string.audio_tunneled),
-            subtitle = stringResource(R.string.audio_tunneled_sub),
-            isChecked = playerSettings.tunnelingEnabled,
-            onCheckedChange = onSetTunnelingEnabled,
-            onFocused = onItemFocused,
-            enabled = enabled
-        )
-    }
+@Composable
+internal fun audioLanguageLabel(code: String): String = when (code) {
+    AudioLanguageOption.DEFAULT -> stringResource(R.string.audio_lang_default)
+    AudioLanguageOption.DEVICE -> stringResource(R.string.audio_lang_device)
+    AudioLanguageOption.ORIGINAL -> stringResource(R.string.audio_lang_original)
+    else -> AVAILABLE_SUBTITLE_LANGUAGES.find { it.code == code }?.displayName ?: code
+}
 
-    item(key = "audio_dv7_hevc_fallback") {
-        ToggleSettingsItem(
-            icon = Icons.Default.Tune,
-            title = stringResource(R.string.audio_dv_title),
-            subtitle = stringResource(R.string.audio_dv_sub),
-            isChecked = playerSettings.mapDV7ToHevc,
-            onCheckedChange = onSetMapDV7ToHevc,
-            onFocused = onItemFocused,
-            enabled = enabled
-        )
-    }
+@Composable
+private fun secondaryAudioLanguageLabel(code: String?): String = when {
+    code == null -> stringResource(R.string.sub_not_set)
+    code.equals(AudioLanguageOption.ORIGINAL, ignoreCase = true) -> stringResource(R.string.audio_lang_original)
+    else -> AVAILABLE_SUBTITLE_LANGUAGES.find { it.code == code }?.displayName ?: code
+}
+
+@Composable
+internal fun decoderPriorityLabel(priority: Int): String = when (priority) {
+    0 -> stringResource(R.string.audio_decoder_device_only)
+    2 -> stringResource(R.string.audio_decoder_prefer_app)
+    else -> stringResource(R.string.audio_decoder_prefer_device)
 }
 
 @Composable
 internal fun AudioSettingsDialogs(
-    showAudioLanguageDialog: Boolean,
-    showSecondaryAudioLanguageDialog: Boolean,
-    showDecoderPriorityDialog: Boolean,
-    selectedLanguage: String,
-    selectedSecondaryLanguage: String?,
-    selectedPriority: Int,
-    onSetPreferredAudioLanguage: (String) -> Unit,
-    onSetSecondaryPreferredAudioLanguage: (String?) -> Unit,
-    onSetDecoderPriority: (Int) -> Unit,
-    onDismissAudioLanguageDialog: () -> Unit,
-    onDismissSecondaryAudioLanguageDialog: () -> Unit,
-    onDismissDecoderPriorityDialog: () -> Unit
+    dialog: PlaybackDialog?,
+    settings: PlayerSettings,
+    onUpdate: PlaybackSettingsUpdate,
+    onDismiss: () -> Unit
 ) {
-    if (showAudioLanguageDialog) {
-        AudioLanguageSelectionDialog(
-            selectedLanguage = selectedLanguage,
-            onLanguageSelected = {
-                onSetPreferredAudioLanguage(it)
-                onDismissAudioLanguageDialog()
+    when (dialog) {
+        PlaybackDialog.AUDIO_LANGUAGE -> AudioLanguageSelectionDialog(
+            selectedLanguage = settings.preferredAudioLanguage,
+            onLanguageSelected = { language ->
+                onUpdate { setPreferredAudioLanguage(language) }
+                onDismiss()
             },
-            onDismiss = onDismissAudioLanguageDialog
+            onDismiss = onDismiss
         )
-    }
-
-    if (showSecondaryAudioLanguageDialog) {
-        LanguageSelectionDialog(
+        PlaybackDialog.SECONDARY_AUDIO_LANGUAGE -> LanguageSelectionDialog(
             title = stringResource(R.string.sub_secondary_lang),
-            selectedLanguage = selectedSecondaryLanguage,
+            selectedLanguage = settings.secondaryPreferredAudioLanguage,
             showNoneOption = true,
-            onLanguageSelected = {
-                onSetSecondaryPreferredAudioLanguage(it)
-                onDismissSecondaryAudioLanguageDialog()
+            extraOptions = listOf(
+                AudioLanguageOption.ORIGINAL to stringResource(R.string.audio_lang_original)
+            ),
+            onLanguageSelected = { language ->
+                onUpdate { setSecondaryPreferredAudioLanguage(language) }
+                onDismiss()
             },
-            onDismiss = onDismissSecondaryAudioLanguageDialog
+            onDismiss = onDismiss
         )
+        PlaybackDialog.AUDIO_OUTPUT_CHANNELS -> AudioOutputChannelsDialog(
+            selectedChannels = settings.audioOutputChannels,
+            onChannelsSelected = { channels ->
+                onUpdate { setAudioOutputChannels(channels) }
+                onDismiss()
+            },
+            onDismiss = onDismiss
+        )
+        PlaybackDialog.DECODER_PRIORITY -> DecoderPriorityDialog(
+            selectedPriority = settings.decoderPriority,
+            onPrioritySelected = { priority ->
+                onUpdate { setDecoderPriority(priority) }
+                onDismiss()
+            },
+            onDismiss = onDismiss
+        )
+        else -> Unit
     }
+}
 
-    if (showDecoderPriorityDialog) {
-        DecoderPriorityDialog(
-            selectedPriority = selectedPriority,
-            onPrioritySelected = {
-                onSetDecoderPriority(it)
-                onDismissDecoderPriorityDialog()
-            },
-            onDismiss = onDismissDecoderPriorityDialog
-        )
-    }
+@Composable
+private fun AudioOutputChannelsDialog(
+    selectedChannels: AudioOutputChannels,
+    onChannelsSelected: (AudioOutputChannels) -> Unit,
+    onDismiss: () -> Unit
+) {
+    SettingsSingleChoiceDialog(
+        title = stringResource(R.string.audio_number_of_channels),
+        subtitle = stringResource(R.string.audio_number_of_channels_desc),
+        options = AudioOutputChannels.entries.map { SettingsPickerOption(it, it.displayLabel) },
+        selectedValue = selectedChannels,
+        onOptionSelected = onChannelsSelected,
+        onDismiss = onDismiss,
+        width = 420.dp,
+        maxHeight = 420.dp
+    )
 }
 
 @Composable
@@ -293,167 +201,57 @@ private fun AudioLanguageSelectionDialog(
     onLanguageSelected: (String) -> Unit,
     onDismiss: () -> Unit
 ) {
-    val focusRequester = remember { FocusRequester() }
     val specialOptions = listOf(
         AudioLanguageOption.DEFAULT to stringResource(R.string.audio_lang_default),
-        AudioLanguageOption.DEVICE to stringResource(R.string.audio_lang_device)
+        AudioLanguageOption.DEVICE to stringResource(R.string.audio_lang_device),
+        AudioLanguageOption.ORIGINAL to stringResource(R.string.audio_lang_original)
     )
-    val allOptions = specialOptions + AVAILABLE_SUBTITLE_LANGUAGES.sortedBy { it.displayName.lowercase() }.map { it.code to it.displayName }
-
-    LaunchedEffect(Unit) {
-        focusRequester.requestFocus()
+    val originalHint = stringResource(R.string.audio_lang_original_hint)
+    val allOptions = specialOptions.map { (code, name) ->
+        SettingsPickerOption(
+            value = code,
+            title = name,
+            description = if (code == AudioLanguageOption.ORIGINAL) originalHint else null
+        )
+    } + AVAILABLE_SUBTITLE_LANGUAGES.sortedBy { it.displayName.lowercase() }.map {
+        SettingsPickerOption(
+            value = it.code,
+            title = it.displayName,
+            trailing = it.code.uppercase()
+        )
     }
 
-    NuvioDialog(
-        onDismiss = onDismiss,
+    SettingsSingleChoiceDialog(
         title = stringResource(R.string.audio_preferred_lang),
+        options = allOptions,
+        selectedValue = selectedLanguage,
+        onOptionSelected = onLanguageSelected,
+        onDismiss = onDismiss,
         width = 400.dp,
-        suppressFirstKeyUp = false
-    ) {
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(320.dp)
-        ) {
-            LazyColumn(
-                modifier = Modifier.fillMaxSize(),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-                contentPadding = androidx.compose.foundation.layout.PaddingValues(vertical = 4.dp)
-            ) {
-                items(
-                    count = allOptions.size,
-                    key = { index -> allOptions[index].first }
-                ) { index ->
-                    val (code, name) = allOptions[index]
-                    val isSelected = code == selectedLanguage
-                    var isFocused by remember { mutableStateOf(false) }
-
-                    Card(
-                        onClick = { onLanguageSelected(code) },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .then(if (index == 0) Modifier.focusRequester(focusRequester) else Modifier)
-                            .onFocusChanged { isFocused = it.isFocused },
-                        colors = CardDefaults.colors(
-                            containerColor = if (isSelected) NuvioColors.FocusBackground else NuvioColors.BackgroundCard,
-                            focusedContainerColor = NuvioColors.FocusBackground
-                        ),
-                        shape = CardDefaults.shape(shape = RoundedCornerShape(10.dp)),
-                        scale = CardDefaults.scale(focusedScale = 1f)
-                    ) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(16.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                text = name,
-                                style = MaterialTheme.typography.bodyLarge,
-                                color = if (isSelected) NuvioColors.Primary else NuvioColors.TextPrimary,
-                                modifier = Modifier.weight(1f)
-                            )
-                            if (isSelected) {
-                                Spacer(modifier = Modifier.width(12.dp))
-                                Icon(
-                                    imageVector = Icons.Default.Check,
-                                    contentDescription = stringResource(R.string.cd_selected),
-                                    tint = NuvioColors.Primary,
-                                    modifier = Modifier.size(20.dp)
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
+        maxHeight = 320.dp
+    )
 }
 
 @Composable
-private fun DecoderPriorityDialog(
+internal fun DecoderPriorityDialog(
     selectedPriority: Int,
     onPrioritySelected: (Int) -> Unit,
     onDismiss: () -> Unit
 ) {
-    val focusRequester = remember { FocusRequester() }
     val options = listOf(
-        Triple(0, stringResource(R.string.audio_decoder_device_only), stringResource(R.string.audio_decoder_device_only_desc)),
-        Triple(1, stringResource(R.string.audio_decoder_prefer_device), stringResource(R.string.audio_decoder_prefer_device_desc)),
-        Triple(2, stringResource(R.string.audio_decoder_prefer_app), stringResource(R.string.audio_decoder_prefer_app_desc))
+        SettingsPickerOption(0, stringResource(R.string.audio_decoder_device_only), stringResource(R.string.audio_decoder_device_only_desc)),
+        SettingsPickerOption(1, stringResource(R.string.audio_decoder_prefer_device), stringResource(R.string.audio_decoder_prefer_device_desc)),
+        SettingsPickerOption(2, stringResource(R.string.audio_decoder_prefer_app), stringResource(R.string.audio_decoder_prefer_app_desc))
     )
 
-    LaunchedEffect(Unit) {
-        focusRequester.requestFocus()
-    }
-
-    NuvioDialog(
-        onDismiss = onDismiss,
+    SettingsSingleChoiceDialog(
         title = stringResource(R.string.audio_decoder_priority),
         subtitle = stringResource(R.string.audio_decoder_controls),
+        options = options,
+        selectedValue = selectedPriority,
+        onOptionSelected = onPrioritySelected,
+        onDismiss = onDismiss,
         width = 420.dp,
-        suppressFirstKeyUp = false
-    ) {
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .heightIn(max = 320.dp)
-        ) {
-            LazyColumn(
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-                contentPadding = androidx.compose.foundation.layout.PaddingValues(vertical = 4.dp)
-            ) {
-                items(
-                    count = options.size,
-                    key = { index -> options[index].first.toString() }
-                ) { index ->
-                    val (priority, title, description) = options[index]
-                    val isSelected = priority == selectedPriority
-
-                    Card(
-                        onClick = { onPrioritySelected(priority) },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .then(if (index == 0) Modifier.focusRequester(focusRequester) else Modifier),
-                        colors = CardDefaults.colors(
-                            containerColor = if (isSelected) NuvioColors.FocusBackground else NuvioColors.BackgroundCard,
-                            focusedContainerColor = NuvioColors.FocusBackground
-                        ),
-                        shape = CardDefaults.shape(shape = RoundedCornerShape(10.dp)),
-                        scale = CardDefaults.scale(focusedScale = 1f)
-                    ) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(16.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = title,
-                                    color = if (isSelected) NuvioColors.Primary else NuvioColors.TextPrimary,
-                                    style = MaterialTheme.typography.bodyLarge
-                                )
-                                Spacer(modifier = Modifier.height(4.dp))
-                                Text(
-                                    text = description,
-                                    color = NuvioColors.TextSecondary,
-                                    style = MaterialTheme.typography.bodySmall
-                                )
-                            }
-                            if (isSelected) {
-                                Spacer(modifier = Modifier.width(12.dp))
-                                Icon(
-                                    imageVector = Icons.Default.Check,
-                                    contentDescription = stringResource(R.string.cd_selected),
-                                    tint = NuvioColors.Primary,
-                                    modifier = Modifier.size(20.dp)
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
+        maxHeight = 320.dp
+    )
 }

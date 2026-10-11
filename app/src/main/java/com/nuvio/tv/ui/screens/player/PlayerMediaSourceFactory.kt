@@ -3,66 +3,170 @@ package com.nuvio.tv.ui.screens.player
 import android.content.Context
 import android.net.Uri
 import android.util.Log
+import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MimeTypes
+import androidx.media3.common.NuvioEngineConfig
+import androidx.media3.database.StandaloneDatabaseProvider
+import androidx.media3.datasource.DataSink
 import androidx.media3.datasource.DataSource
 import androidx.media3.datasource.DefaultDataSource
+import androidx.media3.datasource.cache.Cache
+import androidx.media3.datasource.cache.CacheDataSink
+import androidx.media3.datasource.cache.CacheDataSource
+import androidx.media3.datasource.cache.CacheEvictor
+import androidx.media3.datasource.cache.CacheSpan
+import androidx.media3.datasource.cache.LeastRecentlyUsedCacheEvictor
+import androidx.media3.datasource.cache.SimpleCache
 import androidx.media3.datasource.okhttp.OkHttpDataSource
+import androidx.media3.exoplayer.dash.DashMediaSource
+import androidx.media3.exoplayer.hls.HlsMediaSource
+import androidx.media3.exoplayer.source.ConcatenatingMediaSource2
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import androidx.media3.exoplayer.source.MediaSource
+import androidx.media3.exoplayer.upstream.DefaultLoadErrorHandlingPolicy
+import androidx.media3.exoplayer.upstream.LoadErrorHandlingPolicy
 import androidx.media3.extractor.DefaultExtractorsFactory
 import androidx.media3.extractor.ExtractorsFactory
 import androidx.media3.extractor.text.SubtitleParser
 import androidx.media3.extractor.ts.DefaultTsPayloadReaderFactory
 import androidx.media3.extractor.ts.TsExtractor
-import androidx.media3.exoplayer.dash.DashMediaSource
-import androidx.media3.exoplayer.hls.HlsMediaSource
-import androidx.media3.exoplayer.source.ConcatenatingMediaSource
-import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
-import androidx.media3.exoplayer.source.MediaSource
-import androidx.media3.exoplayer.source.ProgressiveMediaSource
-import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
-import com.nuvio.tv.core.network.IPv4FirstDns
+import com.nuvio.tv.NuvioApplication
+import com.nuvio.tv.R
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.yield
+import com.nuvio.tv.core.network.IPv4FirstDns
+import com.nuvio.tv.data.local.PlayerSettings
+import com.nuvio.tv.data.local.VodCacheSizeMode
+import okhttp3.ConnectionPool
+import okhttp3.Dispatcher
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
-import java.io.ByteArrayOutputStream
-import java.io.InputStream
-import java.net.HttpURLConnection
-import java.net.URL
+import kotlinx.coroutines.withContext
+import java.io.File
+import java.net.SocketTimeoutException
 import java.net.URLDecoder
 import java.security.SecureRandom
 import java.security.cert.X509Certificate
+import java.util.Base64
 import java.util.Locale
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
 import javax.net.ssl.SSLContext
 import javax.net.ssl.TrustManager
 import javax.net.ssl.X509TrustManager
 
-internal class PlayerMediaSourceFactory(
-    private val context: Context
-) {
+internal class PlayerMediaSourceFactory(private val context: Context) {
     private var customExtractorsFactory: ExtractorsFactory? = null
     private var customSubtitleParserFactory: SubtitleParser.Factory? = null
+    private val loadErrorHandlingPolicy = PlayerLoadErrorHandlingPolicy()
+
+    @Volatile private var currentVodCacheUrl: String? = null
+    @Volatile private var currentVodCacheResolvedUrl: String? = null
+    @Volatile private var currentVodCacheActive: Boolean = false
+
+    // Takes the caller's context because this factory only holds the application one, which ignores the in-app language.
+    fun vodCacheStateLabel(context: Context): String = when {
+        currentVodCacheActive ->
+            context.getString(R.string.diag_value_disk_cache_on, formatCacheBytes(configuredVodCacheMaxBytes))
+        isVodCacheDisabled -> context.getString(R.string.diag_value_disk_cache_unavailable)
+        vodCacheEnabled -> context.getString(R.string.diag_value_disk_cache_not_used)
+        else -> context.getString(R.string.diag_value_off)
+    }
+
+    // Distinguishes an empty cache from one holding data the seek did not read.
+    fun vodCacheBytesForKey(cacheKey: String?, url: String?): Long {
+        val key = cacheKey?.takeIf { it.isNotBlank() }
+            ?: url?.takeIf { it.isNotBlank() }
+            ?: return -1L
+        val cache = synchronized(vodCacheLock) { sharedSimpleCache } ?: return -1L
+        return try {
+            cache.getCachedSpans(key).sumOf { it.length }
+        } catch (e: Exception) {
+            -1L
+        }
+    }
+
+    fun vodCacheStatsLabel(context: Context): String = if (configuredVodCacheMaxBytes <= 0L) {
+        "-"
+    } else {
+        context.getString(
+            R.string.diag_value_disk_cache_usage,
+            formatCacheBytes(vodCacheBytesReadFromCache.get()),
+            formatCacheBytes(vodCacheBytesRemoved.get())
+        )
+    }
+    private val parallelStartupPrefetchUnlocked = AtomicBoolean(true)
+
+    fun unlockStartupPrefetch() {
+        parallelStartupPrefetchUnlocked.set(true)
+    }
+
+    var useParallelConnections: Boolean = PlayerSettings.DEFAULT_USE_PARALLEL_CONNECTIONS
+    var parallelConnectionCount: Int = PlayerSettings.DEFAULT_PARALLEL_CONNECTION_COUNT
+    var parallelChunkSizeKb: Int = PlayerSettings.DEFAULT_PARALLEL_CHUNK_SIZE_KB
+    // Gated by the parallel network toggle because its only use is the native memory argument to
+    // the chunk data source, which nothing else builds.
+    var nuvioPerformanceModeEnabled: Boolean = PlayerSettings.DEFAULT_NUVIO_PERFORMANCE_MODE_ENABLED
+
+    // The engine runs off the setting whether or not the parallel gate above passed, so the log
+    // reports this rather than the gated flag.
+    var nativeEngineEnabled: Boolean = PlayerSettings.DEFAULT_NUVIO_PERFORMANCE_MODE_ENABLED
+
+    // Reported only: both decide which target the helper hands the load control, so a log without
+    // them cannot say why a run used the size it did.
+    var bufferEngineEnabled: Boolean = false
+    var bufferBudgetManaged: Boolean = PlayerSettings.DEFAULT_BUFFER_BUDGET_MANAGED
+    var vodCacheEnabled: Boolean = PlayerSettings.DEFAULT_VOD_CACHE_ENABLED
+    var vodCacheSizeMode: VodCacheSizeMode = PlayerSettings.DEFAULT_VOD_CACHE_SIZE_MODE
+    var vodCacheSizeMb: Int = PlayerSettings.DEFAULT_VOD_CACHE_SIZE_MB
+
+    // OkHttp client used only by the opt-in parallel-connections path.
     private val playbackHttpClient by lazy {
-        val trustAllManager = object : X509TrustManager {
-            override fun checkClientTrusted(chain: Array<out X509Certificate>?, authType: String?) = Unit
-            override fun checkServerTrusted(chain: Array<out X509Certificate>?, authType: String?) = Unit
-            override fun getAcceptedIssuers(): Array<X509Certificate> = emptyArray()
-        }
-        val sslContext = SSLContext.getInstance("TLS").apply {
-            init(null, arrayOf<TrustManager>(trustAllManager), SecureRandom())
-        }
-        OkHttpClient.Builder()
-            .dns(IPv4FirstDns())
-            .sslSocketFactory(sslContext.socketFactory, trustAllManager)
-            .hostnameVerifier { _, _ -> true }
-            .connectTimeout(15, TimeUnit.SECONDS)
-            .readTimeout(15, TimeUnit.SECONDS)
-            .writeTimeout(15, TimeUnit.SECONDS)
-            .followRedirects(true)
-            .followSslRedirects(true)
-            .retryOnConnectionFailure(true)
+        PlayerPlaybackNetworking.playbackHttpClient.newBuilder()
+            .cookieJar(NuvioApplication.extensionCookieJar)
+            .let { NuvioExoPlayerPerformanceHelper.applyNetworkOptimizations(it) }
             .build()
+    }
+
+    private val chunkSessionLanes = java.util.concurrent.ConcurrentHashMap<Int, okhttp3.Call.Factory>()
+
+    private fun chunkSessionCallFactory(connections: Int, url: String): okhttp3.Call.Factory {
+        // Plain http:// never negotiates HTTP/2, so lanes would only split the idle sockets.
+        if (url.startsWith("http://", ignoreCase = true)) return playbackHttpClient
+        val factory = chunkSessionLanes.getOrPut(connections) {
+            HttpLanes.callFactory(
+                playbackHttpClient,
+                connections,
+                NuvioExoPlayerPerformanceHelper::lanePool
+            ).also { factory ->
+                if (factory is LaneCallFactory) {
+                    Log.i("PlayerMediaSourceFactory", "HTTP2_LANES lanes=${factory.lanes.size}")
+                }
+            }
+        }
+        (factory as? LaneCallFactory)?.restart()
+        return factory
+    }
+
+    private fun computePrefetchDepthChunks(
+        connections: Int,
+        chunkBytes: Long
+    ): Int {
+        if (!nuvioPerformanceModeEnabled) return connections + 1
+        val chunkMb = (chunkBytes / (1024L * 1024L)).toInt().coerceAtLeast(1)
+        val safeNativeMb = NuvioExoPlayerPerformanceHelper.getSafeNativeMemoryLimitMb(context)
+        val reserveMb = NuvioExoPlayerPerformanceHelper.targetBufferSizeMb.coerceAtLeast(0)
+        return com.nuvio.tv.ui.screens.settings.MemoryBudget.prefetchDepthChunks(
+            connections, chunkMb, safeNativeMb, reserveMb
+        )
     }
 
     fun configureSubtitleParsing(
@@ -73,525 +177,424 @@ internal class PlayerMediaSourceFactory(
         customSubtitleParserFactory = subtitleParserFactory
     }
 
-    private data class RemoteBlurayResolution(
-        val playlistName: String,
-        val segmentUris: List<Uri>
-    )
-
-    private data class ParsedMplsPlaylist(
-        val name: String,
-        val clipIds: List<String>,
-        val duration90kHz: Long
-    )
-
     fun createMediaSource(
+        context: Context,
         url: String,
         headers: Map<String, String>,
         subtitleConfigurations: List<MediaItem.SubtitleConfiguration> = emptyList(),
-        mimeTypeOverride: String? = null
+        subtitleRoutes: Map<String, SubtitleRoute> = emptyMap(),
+        filename: String? = null,
+        responseHeaders: Map<String, String> = emptyMap(),
+        mimeTypeOverride: String? = null,
+        audioDelayUsProvider: (() -> Long)? = null,
+        mediaMetadata: androidx.media3.common.MediaMetadata? = null,
+        cacheKey: String? = null,
+        bluray: BlurayPlaylistResolver.RemoteLayout? = null
     ): MediaSource {
         val sanitizedHeaders = sanitizeHeaders(headers)
-        val httpDataSourceFactory = OkHttpDataSource.Factory(playbackHttpClient).apply {
-            setDefaultRequestProperties(sanitizedHeaders)
-            setUserAgent(DEFAULT_USER_AGENT)
-        }
-        val baseDataSourceFactory = DefaultDataSource.Factory(context, httpDataSourceFactory)
-        val extractorsFactory = customExtractorsFactory ?: createDefaultExtractorsFactory()
-        val defaultFactory = DefaultMediaSourceFactory(baseDataSourceFactory, extractorsFactory).apply {
-            customSubtitleParserFactory?.let { parserFactory ->
-                setSubtitleParserFactory(parserFactory)
-            }
-        }
-        val forceDefaultFactory = customExtractorsFactory != null || customSubtitleParserFactory != null
+        val httpDataSourceFactory = PlayerPlaybackNetworking.createDataSourceFactory(context, sanitizedHeaders)
 
-        val resolvedMimeType = mimeTypeOverride ?: inferMimeType(url = url, filename = null)
+        // A Blu-ray folder plays its longest playlist, clip by clip.
+        val playlistSegments = (bluray as? BlurayPlaylistResolver.RemoteLayout.Playlist)?.segmentUrls
+            ?: BlurayPlaylistResolver.resolve(url)?.segments?.map { Uri.fromFile(it).toString() }
+        if (playlistSegments != null) {
+            return wrapAudioDelay(
+                mediaSource = createBlurayPlaylistSource(
+                    segmentUrls = playlistSegments,
+                    dataSourceFactory = DefaultDataSource.Factory(context, httpDataSourceFactory),
+                    subtitleConfigurations = subtitleConfigurations
+                ),
+                audioDelayUsProvider = audioDelayUsProvider
+            )
+        }
+
+        val resolvedMimeType = mimeTypeOverride ?: inferMimeType(
+            url = url,
+            filename = filename,
+            responseHeaders = responseHeaders
+        )
         val isHls = resolvedMimeType == MimeTypes.APPLICATION_M3U8
         val isDash = resolvedMimeType == MimeTypes.APPLICATION_MPD
 
         val mediaItemBuilder = MediaItem.Builder().setUri(url)
         resolvedMimeType?.let(mediaItemBuilder::setMimeType)
+        filename?.takeIf { it.isNotBlank() }?.let(mediaItemBuilder::setMediaId)
+        // Adaptive sources index their own segments, so a custom key only applies to progressive.
+        if (!isHls && !isDash) {
+            cacheKey?.takeIf { it.isNotBlank() }?.let(mediaItemBuilder::setCustomCacheKey)
+        }
+        mediaMetadata?.let(mediaItemBuilder::setMediaMetadata)
 
         if (subtitleConfigurations.isNotEmpty()) {
             mediaItemBuilder.setSubtitleConfigurations(subtitleConfigurations)
         }
 
         val mediaItem = mediaItemBuilder.build()
-        val blurayLocalSource = BlurayPlaylistResolver.resolve(url)
-        if (blurayLocalSource != null) {
-            return createBlurayMediaSource(
-                source = blurayLocalSource,
-                dataSourceFactory = baseDataSourceFactory,
-                subtitleConfigurations = subtitleConfigurations
-            )
-        }
 
-        if (!isHls && !isDash) {
-            if (isLikelyHttpBdavStream(url = url, headers = sanitizedHeaders)) {
-                return createBdavM2tsMediaSource(
-                    mediaItem = mediaItem,
-                    dataSourceFactory = baseDataSourceFactory
-                )
+        Log.i(
+            "PlayerMediaSource",
+            "PLAYBACK_CONFIG: native=$nativeEngineEnabled " +
+                "customBuffers=$bufferEngineEnabled budgetManaged=$bufferBudgetManaged " +
+                "minBufferMs=${NuvioExoPlayerPerformanceHelper.minBufferMs} " +
+                "maxBufferMs=${NuvioExoPlayerPerformanceHelper.maxBufferMs} " +
+                "backBufferMs=${NuvioExoPlayerPerformanceHelper.backBufferMs} " +
+                "targetMb=${NuvioExoPlayerPerformanceHelper.targetBufferSizeMb} " +
+                "safeNativeMb=${NuvioExoPlayerPerformanceHelper.getSafeNativeMemoryLimitMb(context)} " +
+                "parallel=${if (useParallelConnections) parallelConnectionCount else 0} chunkKb=$parallelChunkSizeKb"
+        )
+        val useChunkSessionSource = useParallelConnections && !isHls && !isDash
+        parallelStartupPrefetchUnlocked.set(!useChunkSessionSource)
+        val progressiveUpstreamFactory: DataSource.Factory = if (useChunkSessionSource) {
+            val sessionConnections = parallelConnectionCount
+            val okHttpFactory = OkHttpDataSource.Factory(chunkSessionCallFactory(sessionConnections, url)).apply {
+                setDefaultRequestProperties(sanitizedHeaders)
+                if (sanitizedHeaders.none { it.key.equals("User-Agent", ignoreCase = true) }) {
+                    setUserAgent(DEFAULT_USER_AGENT)
+                }
             }
-
-            val remoteBluraySource = resolveHttpBlurayDirectory(
-                url = url,
-                headers = sanitizedHeaders
+            val sessionChunkBytes = parallelChunkSizeKb
+                .coerceAtMost(com.nuvio.tv.ui.screens.settings.MemoryBudget.tierMaxChunkMb * 1024)
+                .toLong() * 1024L
+            val effectiveNative =
+                nuvioPerformanceModeEnabled || NuvioEngineConfig.get().isNativeAllocationEnabled()
+            ParallelRangeDataSource.Factory(
+                okHttpFactory,
+                sessionConnections,
+                sessionChunkBytes,
+                useNativeMemory = effectiveNative,
+                prefetchDepthChunks = computePrefetchDepthChunks(
+                    sessionConnections,
+                    sessionChunkBytes
+                ),
+                shouldAllowBackgroundPrefetch = { parallelStartupPrefetchUnlocked.get() },
+                onResolvedUri = { resolved -> currentVodCacheResolvedUrl = resolved?.toString() }
             )
-            if (remoteBluraySource != null) {
-                return createBlurayMediaSource(
-                    playlistName = remoteBluraySource.playlistName,
-                    segmentUris = remoteBluraySource.segmentUris,
-                    dataSourceFactory = baseDataSourceFactory,
-                    subtitleConfigurations = subtitleConfigurations
-                )
+        } else if (isLoopbackUrl(url)) {
+            PlayerPlaybackNetworking.createHttpDataSourceFactory(sanitizedHeaders, useLongReadTimeout = true)
+        } else {
+            httpDataSourceFactory
+        }
+
+        // 2. VOD disk cache (opt-in).
+        val useVodCache = ENABLE_VOD_CACHE && vodCacheEnabled && !isHls && !isDash && shouldUseVodCache(url)
+        // A playback started inside the delay window would have its own data swept out from under it.
+        pendingEvictionJob?.cancel()
+        pendingEvictionJob = null
+        currentVodCacheUrl = url
+        currentVodCacheResolvedUrl = null
+        vodCacheEvictor?.resetTrimAnchor()
+        // Size the cache only when used; 0 means off or not enough free space (skip, stream direct).
+        val vodCacheMaxBytes = if (useVodCache && !isVodCacheDisabled) resolveVodCacheMaxBytes() else 0L
+        val vodCacheActive = vodCacheMaxBytes > 0L
+
+        val cachedProgressiveFactory: DataSource.Factory = if (vodCacheActive) {
+            val cache = obtainVodCache(context, vodCacheMaxBytes)
+            if (cache != null) {
+                currentVodCacheActive = true
+                buildVodCacheDataSourceFactory(progressiveUpstreamFactory, cache)
+            } else {
+                currentVodCacheActive = false
+                progressiveUpstreamFactory
+            }
+        } else {
+            currentVodCacheActive = false
+            progressiveUpstreamFactory
+        }
+        // The buffer only pays off against the cache's per-call cost, so a direct stream keeps its original chain.
+        val progressiveFactory: DataSource.Factory = if (currentVodCacheActive) {
+            DataSource.Factory { BufferedReadDataSource(cachedProgressiveFactory.createDataSource()) }
+        } else {
+            cachedProgressiveFactory
+        }
+        // BUFFER_NETWORK reports the setting before this runs, so report what the stream actually got.
+        Log.i(
+            LOG_TAG,
+            "VOD_CACHE: enabled=$vodCacheEnabled active=$currentVodCacheActive " +
+                "requestedCap=${vodCacheMaxBytes / (1024L * 1024L)}MB stats=${vodCacheStatsSnapshot()}"
+        )
+
+        // Blu-ray clips (BDAV) put a 4-byte header before every 188-byte TS packet, which
+        // TsExtractor cannot read. Strip it above the cache, which keeps the source's offsets.
+        val bdav = !isHls && !isDash &&
+            (bluray == BlurayPlaylistResolver.RemoteLayout.BdavClip || BlurayPlaylistResolver.isLikelyBdavM2tsUrl(url))
+        val mediaDataFactory = if (bdav) BdavM2tsDataSourceFactory(progressiveFactory) else progressiveFactory
+        val extractorsFactory = if (bdav) createBdavExtractorsFactory() else customExtractorsFactory ?: DefaultExtractorsFactory()
+        // MediaItem subtitle tracks load through this factory too; route addon subtitles through the
+        // subtitle download path so they don't inherit the stream's headers and client.
+        val defaultSourceFactory = if (subtitleConfigurations.isNotEmpty()) {
+            SubtitleRoutingDataSourceFactory(mediaDataFactory, url, headers, subtitleRoutes)
+        } else {
+            mediaDataFactory
+        }
+        val defaultFactory = DefaultMediaSourceFactory(defaultSourceFactory, extractorsFactory).apply {
+            setLoadErrorHandlingPolicy(loadErrorHandlingPolicy)
+            customSubtitleParserFactory?.let { parserFactory ->
+                setSubtitleParserFactory(parserFactory)
             }
         }
-
-        if (BlurayPlaylistResolver.isLikelyBdavM2tsUrl(url)) {
-            return createBdavM2tsMediaSource(
-                mediaItem = mediaItem,
-                dataSourceFactory = baseDataSourceFactory
-            )
-        }
+        val forceDefaultFactory = customExtractorsFactory != null || customSubtitleParserFactory != null
 
         // Sidecar subtitles are more reliable through DefaultMediaSourceFactory.
         if (subtitleConfigurations.isNotEmpty()) {
-            return defaultFactory.createMediaSource(mediaItem)
+            return wrapAudioDelay(
+                mediaSource = defaultFactory.createMediaSource(mediaItem),
+                audioDelayUsProvider = audioDelayUsProvider
+            )
         }
 
-        return when {
+        val mediaSource = when {
             isHls && !forceDefaultFactory -> HlsMediaSource.Factory(httpDataSourceFactory)
                 .setAllowChunklessPreparation(true)
+                .setLoadErrorHandlingPolicy(loadErrorHandlingPolicy)
                 .createMediaSource(mediaItem)
             isDash && !forceDefaultFactory -> DashMediaSource.Factory(httpDataSourceFactory)
+                .setLoadErrorHandlingPolicy(loadErrorHandlingPolicy)
                 .createMediaSource(mediaItem)
             else -> defaultFactory.createMediaSource(mediaItem)
         }
+        return wrapAudioDelay(mediaSource = mediaSource, audioDelayUsProvider = audioDelayUsProvider)
     }
 
-    fun shutdown() = Unit
-
-    private fun createDefaultExtractorsFactory(): ExtractorsFactory {
-        return DefaultExtractorsFactory()
-            .setTsExtractorFlags(DefaultTsPayloadReaderFactory.FLAG_ENABLE_HDMV_DTS_AUDIO_STREAMS)
-            .setTsExtractorTimestampSearchBytes(1500 * TsExtractor.TS_PACKET_SIZE)
-    }
-
-    private fun createBdavExtractorsFactory(): ExtractorsFactory {
-        val tsFlags =
+    private fun createBdavExtractorsFactory(): ExtractorsFactory = DefaultExtractorsFactory()
+        // Blu-ray carries DTS on HDMV stream types; splice info sections crash SpliceInfoDecoder.
+        .setTsExtractorFlags(
             DefaultTsPayloadReaderFactory.FLAG_ENABLE_HDMV_DTS_AUDIO_STREAMS or
                 DefaultTsPayloadReaderFactory.FLAG_IGNORE_SPLICE_INFO_STREAM
-        return DefaultExtractorsFactory()
-            .setTsExtractorFlags(tsFlags)
-            .setTsExtractorTimestampSearchBytes(1500 * TsExtractor.TS_PACKET_SIZE)
-    }
+        )
+        .setTsExtractorTimestampSearchBytes(1500 * TsExtractor.TS_PACKET_SIZE)
 
-    private fun createBlurayMediaSource(
-        source: BlurayPlaylistResolver.ResolvedBluraySource,
+    /** One timeline over the playlist's clips, so the seek bar covers the whole feature. */
+    private fun createBlurayPlaylistSource(
+        segmentUrls: List<String>,
         dataSourceFactory: DataSource.Factory,
         subtitleConfigurations: List<MediaItem.SubtitleConfiguration>
     ): MediaSource {
-        return createBlurayMediaSource(
-            playlistName = source.playlistFile.name,
-            segmentUris = source.segments.map { segment -> Uri.fromFile(segment) },
-            dataSourceFactory = dataSourceFactory,
-            subtitleConfigurations = subtitleConfigurations
+        val clipFactory = DefaultMediaSourceFactory(BdavM2tsDataSourceFactory(dataSourceFactory), createBdavExtractorsFactory())
+            .setLoadErrorHandlingPolicy(loadErrorHandlingPolicy)
+        val builder = ConcatenatingMediaSource2.Builder()
+        segmentUrls.forEach { segmentUrl ->
+            val clip = MediaItem.Builder().setUri(segmentUrl).setMimeType(MimeTypes.VIDEO_MP2T)
+            // Sidecar subtitles have one timeline; with several clips they would restart at each one.
+            if (segmentUrls.size == 1) clip.setSubtitleConfigurations(subtitleConfigurations)
+            builder.add(clipFactory.createMediaSource(clip.build()), C.TIME_UNSET)
+        }
+        return builder.build()
+    }
+
+    fun shutdown() {
+        ParallelRangeDataSource.releaseRetainedSession()
+    }
+
+    // The counters are all zero at playback start, so the start line never shows what the cache
+    // actually served.
+    fun logVodCacheStats() {
+        Log.i(
+            LOG_TAG,
+            "VOD_CACHE_END: enabled=$vodCacheEnabled active=$currentVodCacheActive " +
+                "stats=${vodCacheStatsSnapshot()}"
         )
     }
 
-    private fun createBlurayMediaSource(
-        playlistName: String,
-        segmentUris: List<Uri>,
-        dataSourceFactory: DataSource.Factory,
-        subtitleConfigurations: List<MediaItem.SubtitleConfiguration>
-    ): MediaSource {
-        val concatenatingMediaSource = ConcatenatingMediaSource()
-        segmentUris.forEachIndexed { index, segmentUri ->
-            val mediaItemBuilder = MediaItem.Builder()
-                .setUri(segmentUri)
-                .setMediaId("$playlistName#$index")
-            if (segmentUris.size == 1 && subtitleConfigurations.isNotEmpty()) {
-                mediaItemBuilder.setSubtitleConfigurations(subtitleConfigurations)
-            }
-            val segmentMediaItem = mediaItemBuilder
-                .build()
-            concatenatingMediaSource.addMediaSource(
-                createBdavM2tsMediaSource(
-                    mediaItem = segmentMediaItem,
-                    dataSourceFactory = dataSourceFactory
-                )
+    // Data from a finished title is only reachable by resuming it, so drop it rather than let it
+    // evict the next title's window. Runs off the caller thread because the user is navigating.
+    fun evictCachedSession() {
+        pendingEvictionJob?.cancel()
+        pendingEvictionJob = vodCacheMaintenanceScope.launch {
+            // Deleting gigabytes the instant playback ends lands on the exit animation and the
+            // first scroll of the screen behind it.
+            delay(EVICTION_DELAY_MS)
+            val cache = synchronized(vodCacheLock) { sharedSimpleCache } ?: return@launch
+            clearAllCachedResources(cache)
+        }
+    }
+
+    private fun buildVodCacheDataSourceFactory(upstreamFactory: DataSource.Factory, cache: SimpleCache): DataSource.Factory {
+        val dataSinkFactory = DataSink.Factory {
+            VodCacheWriteSink(
+                CacheDataSink.Factory().setCache(cache)
+                    .setFragmentSize(VOD_CACHE_FRAGMENT_BYTES)
+                    .createDataSink(),
+                vodCacheWriteCounters
             )
         }
-        return concatenatingMediaSource
-    }
-
-    private fun createBdavM2tsMediaSource(
-        mediaItem: MediaItem,
-        dataSourceFactory: DataSource.Factory
-    ): MediaSource {
-        val bdavDataSourceFactory = BdavM2tsDataSourceFactory(dataSourceFactory)
-        val extractorsFactory = createBdavExtractorsFactory()
-        return ProgressiveMediaSource.Factory(bdavDataSourceFactory, extractorsFactory)
-            .createMediaSource(mediaItem)
-    }
-
-    private fun isLikelyHttpBdavStream(
-        url: String,
-        headers: Map<String, String>
-    ): Boolean {
-        val httpUrl = url.toHttpUrlOrNull() ?: return false
-        if (httpUrl.scheme !in listOf("http", "https")) return false
-
-        val requestBuilder = Request.Builder().url(url).get()
-        headers.forEach { (key, value) -> requestBuilder.addHeader(key, value) }
-        val request = requestBuilder.build()
-
-        return try {
-            playbackHttpClient.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) return false
-
-                val contentType = response.header("Content-Type").orEmpty().lowercase(Locale.US)
-                val body = response.body ?: return false
-                val sample = body.byteStream().use { input ->
-                    val buffer = ByteArray(4096)
-                    val read = input.read(buffer)
-                    if (read <= 0) ByteArray(0) else buffer.copyOf(read)
+        return CacheDataSource.Factory()
+            .setCache(cache)
+            .setCacheWriteDataSinkFactory(dataSinkFactory)
+            .setUpstreamDataSourceFactory(upstreamFactory)
+            .setFlags(CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR)
+            .setEventListener(object : CacheDataSource.EventListener {
+                override fun onCachedBytesRead(cacheSizeBytes: Long, cachedBytesRead: Long) {
+                    vodCacheBytesReadFromCache.addAndGet(cachedBytesRead)
                 }
-                if (sample.isEmpty()) return false
 
-                val likelyTsMime =
-                    contentType.contains("video/vnd.dlna.mpeg-tts") ||
-                        contentType.contains("video/mp2t") ||
-                        contentType.contains("mpeg-tts")
-                if (!likelyTsMime) return false
-
-                matchesBdavPacketPattern(sample)
-            }
-        } catch (error: Exception) {
-            Log.w(
-                TAG,
-                "HTTP BDAV probe exception for url=${summarizeUrlForLog(url)}: ${error.javaClass.simpleName}: ${error.message}",
-                error
-            )
-            false
-        }
+                override fun onCacheIgnored(reason: Int) {
+                    Log.w(LOG_TAG, "VOD_CACHE: read bypassed the cache, reason=$reason")
+                }
+            })
     }
 
-    private fun matchesBdavPacketPattern(bytes: ByteArray): Boolean {
-        if (bytes.size < 5) return false
-        if ((bytes[4].toInt() and 0xFF) != 0x47) return false
-
-        // Strong match when two sync bytes align at 192-byte distance (4 + 192).
-        if (bytes.size >= 197 && (bytes[196].toInt() and 0xFF) == 0x47) {
-            return true
-        }
-        // Soft fallback for short probes where second packet boundary is unavailable.
-        return bytes.size < 197
+    private fun shouldUseVodCache(url: String): Boolean {
+        val scheme = Uri.parse(url).scheme?.lowercase()
+        return scheme == "https" || scheme == "http"
     }
 
-    private fun resolveHttpBlurayDirectory(
-        url: String,
-        headers: Map<String, String>
-    ): RemoteBlurayResolution? {
-        val httpUrl = url.toHttpUrlOrNull() ?: return null
-        if (httpUrl.scheme !in listOf("http", "https")) return null
+    private fun resolveVodCacheMaxBytes(): Long {
+        val minBytes = PlayerSettings.MIN_VOD_CACHE_SIZE_MB.toLong() * 1024L * 1024L
+        val maxBytes = PlayerSettings.MAX_VOD_CACHE_SIZE_MB.toLong() * 1024L * 1024L
+        val runtimeMaxBytes = resolveRuntimeVodCacheUpperBoundBytes(maxBytes)
+        // Not enough free space to host a useful cache: skip it (0 = caller streams direct).
+        if (runtimeMaxBytes < minBytes) return 0L
+        val manualBytes = vodCacheSizeMb
+            .coerceIn(PlayerSettings.MIN_VOD_CACHE_SIZE_MB, PlayerSettings.MAX_VOD_CACHE_SIZE_MB)
+            .toLong() * 1024L * 1024L
+        val resolvedManualBytes = manualBytes.coerceAtMost(runtimeMaxBytes)
 
-        val rootProbe = fetchText(
-            url = httpUrl.toString(),
-            headers = headers,
-            maxBytes = 256 * 1024
-        ) ?: return null
-        if (!looksLikeBlurayDirectoryHtml(rootProbe)) return null
+        if (vodCacheSizeMode == VodCacheSizeMode.MANUAL) return resolvedManualBytes
 
-        val rootUrl = if (httpUrl.encodedPath.endsWith("/")) {
-            httpUrl
+        val freeSpaceBytes = reclaimableSpaceBytes()
+        if (freeSpaceBytes <= 0L) return resolvedManualBytes
+        return resolveAutoVodCacheBytes(freeSpaceBytes, minBytes, runtimeMaxBytes)
+    }
+
+    // What the cache already holds is reclaimable, so leaving it out would shrink the cap on every stream.
+    private fun reclaimableSpaceBytes(): Long = context.cacheDir.usableSpace + currentVodCacheSpaceBytes()
+
+    private fun resolveRuntimeVodCacheUpperBoundBytes(hardMaxBytes: Long): Long {
+        val freeSpaceBytes = reclaimableSpaceBytes()
+        val headroomAdjusted = if (freeSpaceBytes > VOD_CACHE_FREE_SPACE_RESERVE_BYTES) {
+            freeSpaceBytes - VOD_CACHE_FREE_SPACE_RESERVE_BYTES
         } else {
-            httpUrl.newBuilder().addPathSegment("").build()
+            (freeSpaceBytes * 8L) / 10L
         }
-        val playlistDirUrl = rootUrl.resolve("BDMV/PLAYLIST/") ?: return null
-        val playlistHtml = fetchText(
-            url = playlistDirUrl.toString(),
-            headers = headers,
-            maxBytes = 512 * 1024
-        ) ?: return null
-        val playlistNames = extractPlaylistNames(playlistHtml)
-        if (playlistNames.isEmpty()) {
-            Log.w(TAG, "HTTP Blu-ray directory detected but no .mpls found at ${playlistDirUrl.encodedPath}")
-            return null
-        }
-
-        val parsedPlaylists = playlistNames.mapNotNull { playlistName ->
-            val playlistUrl = playlistDirUrl.resolve(playlistName) ?: return@mapNotNull null
-            val bytes = fetchBytes(
-                url = playlistUrl.toString(),
-                headers = headers,
-                maxBytes = 1024 * 1024
-            ) ?: return@mapNotNull null
-            parseMplsPlaylist(name = playlistName, data = bytes)
-        }
-        if (parsedPlaylists.isEmpty()) {
-            Log.w(TAG, "Failed to parse all remote .mpls playlists under ${playlistDirUrl.encodedPath}")
-            return null
-        }
-
-        val selected = parsedPlaylists.maxWithOrNull(
-            compareBy<ParsedMplsPlaylist> { it.duration90kHz }
-                .thenBy { it.clipIds.size }
-                .thenBy { it.name }
-        ) ?: return null
-
-        val streamDirUrl = rootUrl.resolve("BDMV/STREAM/") ?: return null
-        val segmentUris = selected.clipIds.mapNotNull { clipId ->
-            streamDirUrl.resolve("$clipId.m2ts")?.let { resolved -> Uri.parse(resolved.toString()) }
-        }
-        if (segmentUris.isEmpty()) {
-            Log.w(TAG, "Selected remote playlist=${selected.name} but produced zero segment URIs")
-            return null
-        }
-
-        return RemoteBlurayResolution(
-            playlistName = selected.name,
-            segmentUris = segmentUris
-        )
-    }
-
-    private fun fetchText(
-        url: String,
-        headers: Map<String, String>,
-        maxBytes: Int
-    ): String? {
-        val bytes = fetchBytes(url, headers, maxBytes) ?: return null
-        return try {
-            String(bytes, Charsets.UTF_8)
-        } catch (error: Exception) {
-            Log.w(
-                TAG,
-                "HTTP probe text decode failed: url=${summarizeUrlForLog(url)} bytes=${bytes.size} error=${error.javaClass.simpleName}: ${error.message}",
-                error
-            )
-            null
-        }
-    }
-
-    private fun fetchBytes(
-        url: String,
-        headers: Map<String, String>,
-        maxBytes: Int
-    ): ByteArray? {
-        val requestBuilder = Request.Builder().url(url).get()
-        headers.forEach { (key, value) -> requestBuilder.addHeader(key, value) }
-        val request = requestBuilder.build()
-        return try {
-            playbackHttpClient.newCall(request).execute().use { response ->
-                val responseCode = response.code
-                val contentType = response.header("Content-Type").orEmpty()
-                val contentLength = response.header("Content-Length").orEmpty()
-                val location = response.header("Location").orEmpty()
-                val body = response.body
-                if (body == null) {
-                    Log.w(
-                        TAG,
-                        "HTTP probe failed: empty body code=$responseCode type=$contentType len=$contentLength location=$location url=${summarizeUrlForLog(url)}"
-                    )
-                    return null
-                }
-                body.byteStream().use { input ->
-                    val output = ByteArrayOutputStream(minOf(maxBytes, 64 * 1024))
-                    val buffer = ByteArray(8 * 1024)
-                    var total = 0
-                    while (total < maxBytes) {
-                        val toRead = minOf(buffer.size, maxBytes - total)
-                        val read = input.read(buffer, 0, toRead)
-                        if (read <= 0) break
-                        output.write(buffer, 0, read)
-                        total += read
-                    }
-                    val bytes = output.toByteArray()
-                    if (!response.isSuccessful) {
-                        val hexPreview = toHexPreview(bytes, 24)
-                        val asciiPreview = toAsciiPreview(bytes, 96)
-                        val payloadType = classifyPayload(contentType, bytes)
-                        Log.w(
-                            TAG,
-                            "HTTP probe failed: code=$responseCode type=$contentType len=$contentLength location=$location payload=$payloadType bytes=${bytes.size} hex=$hexPreview ascii=\"$asciiPreview\" url=${summarizeUrlForLog(url)}"
-                        )
-                        return null
-                    }
-                    bytes
-                }
-            }
-        } catch (error: Exception) {
-            Log.w(
-                TAG,
-                "HTTP probe exception for url=${summarizeUrlForLog(url)}: ${error.javaClass.simpleName}: ${error.message}",
-                error
-            )
-            null
-        }
-    }
-
-    private fun classifyPayload(contentType: String, bytes: ByteArray): String {
-        val ct = contentType.lowercase(Locale.US)
-        if (bytes.isEmpty()) return "empty"
-        if (ct.contains("text/html")) return "html"
-        if (ct.contains("application/json") || ct.contains("text/json")) return "json"
-        if (ct.startsWith("text/")) return "text"
-        if (bytes.size >= 4 &&
-            bytes[0] == 0x1A.toByte() &&
-            bytes[1] == 0x45.toByte() &&
-            bytes[2] == 0xDF.toByte() &&
-            bytes[3] == 0xA3.toByte()
-        ) {
-            return "matroska"
-        }
-        if (bytes.size >= 2 && bytes[0] == '<'.code.toByte() && bytes[1] == '!'.code.toByte()) {
-            return "html-like"
-        }
-        if (bytes[0] == '{'.code.toByte() || bytes[0] == '['.code.toByte()) {
-            return "json-like"
-        }
-        return "binary"
-    }
-
-    private fun toHexPreview(bytes: ByteArray, max: Int): String {
-        if (bytes.isEmpty()) return "<empty>"
-        val count = minOf(bytes.size, max)
-        return bytes
-            .take(count)
-            .joinToString(" ") { value -> "%02X".format(value.toInt() and 0xFF) } +
-            if (bytes.size > max) " ..." else ""
-    }
-
-    private fun toAsciiPreview(bytes: ByteArray, max: Int): String {
-        if (bytes.isEmpty()) return "<empty>"
-        val count = minOf(bytes.size, max)
-        val builder = StringBuilder(count)
-        for (i in 0 until count) {
-            val b = bytes[i].toInt() and 0xFF
-            val char = b.toChar()
-            builder.append(
-                if (char in ' '..'~') char else '.'
-            )
-        }
-        if (bytes.size > max) builder.append("...")
-        return builder.toString()
-    }
-
-    private fun looksLikeBlurayDirectoryHtml(content: String): Boolean {
-        val lower = content.lowercase(Locale.US)
-        return (lower.contains("<html") || lower.contains("<a ")) &&
-            lower.contains("bdmv") &&
-            (lower.contains("certificate") || lower.contains("playlist"))
-    }
-
-    private fun extractPlaylistNames(content: String): List<String> {
-        return Regex("""(?i)(\d{5}\.mpls)""")
-            .findAll(content)
-            .map { match -> match.groupValues[1] }
-            .distinct()
-            .toList()
-    }
-
-    private fun parseMplsPlaylist(name: String, data: ByteArray): ParsedMplsPlaylist? {
-        if (data.size < 32) return null
-        val header = readAscii(data, 0, 4)
-        if (header != "MPLS") return null
-
-        val playlistStart = readUInt32(data, 8).toInt()
-        if (playlistStart <= 0 || playlistStart + 10 > data.size) return null
-
-        val sectionStart = playlistStart + 4
-        val playItemCount = readUInt16(data, sectionStart + 2)
-        var cursor = sectionStart + 6
-
-        val clipIds = ArrayList<String>(playItemCount)
-        var duration90kHz = 0L
-
-        repeat(playItemCount) {
-            if (cursor + 2 > data.size) return@repeat
-            val itemLength = readUInt16(data, cursor)
-            if (itemLength <= 0) return@repeat
-            val itemStart = cursor + 2
-            val itemEnd = itemStart + itemLength
-            if (itemEnd > data.size || itemStart + 20 > data.size) return@repeat
-
-            val clipId = readAscii(data, itemStart, 5)
-            val codecId = readAscii(data, itemStart + 5, 4)
-            if (
-                clipId.length == 5 &&
-                clipId.all { char -> char.isDigit() } &&
-                codecId.equals("M2TS", ignoreCase = true)
-            ) {
-                clipIds += clipId
-            }
-
-            val inTime = readUInt32(data, itemStart + 12)
-            val outTime = readUInt32(data, itemStart + 16)
-            if (outTime > inTime) {
-                duration90kHz += (outTime - inTime)
-            }
-
-            cursor = itemEnd
-        }
-
-        if (clipIds.isEmpty()) return null
-        return ParsedMplsPlaylist(
-            name = name,
-            clipIds = clipIds,
-            duration90kHz = duration90kHz
-        )
-    }
-
-    private fun readUInt16(data: ByteArray, offset: Int): Int {
-        if (offset + 1 >= data.size) return 0
-        return ((data[offset].toInt() and 0xFF) shl 8) or
-            (data[offset + 1].toInt() and 0xFF)
-    }
-
-    private fun readUInt32(data: ByteArray, offset: Int): Long {
-        if (offset + 3 >= data.size) return 0L
-        return ((data[offset].toLong() and 0xFF) shl 24) or
-            ((data[offset + 1].toLong() and 0xFF) shl 16) or
-            ((data[offset + 2].toLong() and 0xFF) shl 8) or
-            (data[offset + 3].toLong() and 0xFF)
-    }
-
-    private fun readAscii(data: ByteArray, offset: Int, length: Int): String {
-        if (offset < 0 || length <= 0 || offset + length > data.size) return ""
-        return String(data, offset, length, Charsets.US_ASCII).trim()
-    }
-
-    private fun summarizeUrlForLog(url: String): String {
-        return summarizeUriForLog(runCatching { Uri.parse(url) }.getOrNull())
-    }
-
-    private fun summarizeUriForLog(uri: Uri?): String {
-        if (uri == null) return "<null>"
-        val scheme = uri.scheme
-        val host = uri.host
-        val path = uri.path.orEmpty()
-        return when {
-            !scheme.isNullOrBlank() && !host.isNullOrBlank() -> "$scheme://$host$path"
-            !scheme.isNullOrBlank() && path.isNotBlank() -> "$scheme:$path"
-            else -> uri.toString().substringBefore('?')
-        }
-    }
-
-    private fun extractPath(url: String): String {
-        val parsed = runCatching { Uri.parse(url) }.getOrNull()
-        if (parsed != null && !parsed.path.isNullOrBlank()) {
-            return parsed.path ?: url
-        }
-        return url.substringBefore('?')
+        return headroomAdjusted.coerceAtLeast(1L * 1024L * 1024L).coerceAtMost(hardMaxBytes)
     }
 
     companion object {
-        private const val TAG = "PlayerMediaSourceFactory"
-        private const val PROBE_TIMEOUT_MS = 4000
-        private const val PROBE_BYTES = 1024
-        private const val DEFAULT_USER_AGENT =
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
+        private const val MIME_VIDEO_QUICK_TIME = "video/quicktime"
+        private const val ENABLE_VOD_CACHE = true
+        private const val VOD_CACHE_FREE_SPACE_RESERVE_BYTES = 1024L * 1024L * 1024L
+        private const val VOD_CACHE_DIR_NAME = "nuvio_vod_cache"
+        private const val VOD_CACHE_STALE_PREFIX = "nuvio_vod_cache_stale_"
+        // Larger fragments mean fewer files to create, index and delete, which is the part of cache
+        // upkeep that competes with playback reads on slow storage.
+        private const val VOD_CACHE_FRAGMENT_BYTES = 8L * 1024L * 1024L
+
+        // Bytes kept behind the playhead, roughly 120s at 66 Mbps; anything older is only reachable
+        // by a seek longer than the back buffer already covers, so keeping it just evicts other titles.
+        private const val VOD_CACHE_RETAIN_BEHIND_BYTES = 1024L * 1024L * 1024L
+        private const val VOD_CACHE_TRIM_STEP_BYTES = 64L * 1024L * 1024L
+        private const val LOG_TAG = "PlayerMediaSource"
+        private const val AUTO_VOD_CACHE_FLOOR_BYTES = 2L * 1024L * 1024L * 1024L
+        internal const val DEFAULT_USER_AGENT =
+            "Mozilla/5.0 (Linux; Android 13; Android TV) AppleWebKit/537.36 " +
                 "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+
+        private const val MIME_PROBE_CACHE_SIZE = 64
+
+        data class StreamProbeInfo(
+            val contentLength: Long,
+            val acceptsRanges: Boolean
+        )
+
+        private val probeInfoCache = object : LinkedHashMap<String, StreamProbeInfo>(MIME_PROBE_CACHE_SIZE, 0.75f, true) {
+            override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, StreamProbeInfo>?): Boolean {
+                return size > MIME_PROBE_CACHE_SIZE
+            }
+        }
+
+        @JvmStatic
+        fun getProbeInfo(url: String, headers: Map<String, String>): StreamProbeInfo? {
+            val sanitizedHeaders = sanitizeHeaders(headers)
+            val cacheKey = buildMimeProbeCacheKey(url, sanitizedHeaders)
+            return synchronized(probeInfoCache) {
+                probeInfoCache[cacheKey]
+            }
+        }
+
+        private fun cacheProbeInfo(url: String, headers: Map<String, String>, contentLength: Long, acceptsRanges: Boolean) {
+            val sanitizedHeaders = sanitizeHeaders(headers)
+            val cacheKey = buildMimeProbeCacheKey(url, sanitizedHeaders)
+            synchronized(probeInfoCache) {
+                probeInfoCache[cacheKey] = StreamProbeInfo(contentLength, acceptsRanges)
+            }
+        }
+
+        private fun buildMimeProbeCacheKey(url: String, headers: Map<String, String>): String {
+            if (headers.isEmpty()) return url
+            return buildString {
+                append(url)
+                headers.toSortedMap(String.CASE_INSENSITIVE_ORDER).forEach { (key, value) ->
+                    append('|')
+                    append(key)
+                    append('=')
+                    append(value)
+                }
+            }
+        }
+
+        data class NormalizedPlaybackRequest(
+            val url: String,
+            val headers: Map<String, String>
+        )
+
+        @Volatile private var sharedSimpleCache: SimpleCache? = null
+        private var sharedVodDatabaseProvider: StandaloneDatabaseProvider? = null
+        @Volatile private var configuredVodCacheMaxBytes: Long = -1L
+        @Volatile private var isVodCacheDisabled: Boolean = false
+        private val vodCacheLock = Any()
+        private val vodCacheBytesReadFromCache = AtomicLong(0L)
+        private val vodCacheSpansRemoved = AtomicLong(0L)
+        private val vodCacheBytesRemoved = AtomicLong(0L)
+        private val vodCacheBytesTrimmed = AtomicLong(0L)
+        private val vodCacheWriteCounters = VodCacheWriteSink.Counters()
+        @Volatile private var vodCacheEvictor: CountingCacheEvictor? = null
+
+        // A header read at 0, the jump to a resume point and an mp4 index at the tail all look alike
+        // as they arrive, so the window follows the playhead the controller reports instead.
+        @Volatile var vodCachePlayheadBytesProvider: (() -> Long)? = null
+
+        @Volatile
+        private var pendingEvictionJob: Job? = null
+
+        private const val EVICTION_DELAY_MS = 5_000L
+
+        // Process scoped so cleanup survives the player screen being torn down.
+        private val vodCacheMaintenanceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+        private suspend fun removeResourceQuietly(cache: SimpleCache, key: String) {
+            val spans = try {
+                cache.getCachedSpans(key)
+            } catch (e: Exception) {
+                return
+            }
+            for (span in spans) {
+                try {
+                    cache.removeSpan(span)
+                } catch (e: Exception) {
+                    // A locked span is dropped by the evictor later.
+                }
+                // A long cleanup should not monopolize an IO worker other loads may need.
+                yield()
+            }
+        }
+
+        // A crash leaves the previous session's titles behind, so start each app run clean.
+        private fun clearStaleVodCache(cache: SimpleCache) {
+            vodCacheMaintenanceScope.launch { clearAllCachedResources(cache) }
+        }
+
+        // Removing only the key the player reports orphans anything written under a resolved url,
+        // which then survives until the cap forces an eviction mid playback.
+        private suspend fun clearAllCachedResources(cache: SimpleCache) {
+            val keys = try {
+                cache.keys.toList()
+            } catch (e: Exception) {
+                return
+            }
+            for (key in keys) {
+                removeResourceQuietly(cache, key)
+            }
+        }
 
         fun sanitizeHeaders(headers: Map<String, String>?): Map<String, String> {
             val raw: Map<*, *> = headers ?: return emptyMap()
@@ -608,10 +611,41 @@ internal class PlayerMediaSourceFactory(
             return sanitized
         }
 
+        fun normalizePlaybackRequest(
+            url: String,
+            headers: Map<String, String>?
+        ): NormalizedPlaybackRequest {
+            val sanitizedHeaders = sanitizeHeaders(headers)
+            val (cleanUrl, mergedHeaders) = extractUserInfoAuth(url, sanitizedHeaders)
+            return NormalizedPlaybackRequest(
+                url = cleanUrl,
+                headers = sanitizeHeaders(mergedHeaders)
+            )
+        }
+
+        internal fun isLoopbackUrl(url: String): Boolean {
+            val host = url.toHttpUrlOrNull()?.host ?: return false
+            return host == "127.0.0.1" || host == "::1" || host.equals("localhost", ignoreCase = true)
+        }
+
         fun parseHeaders(headers: String?): Map<String, String> {
             if (headers.isNullOrEmpty()) return emptyMap()
 
             return try {
+                // Try JSON format first (new)
+                if (headers.trimStart().startsWith("{")) {
+                    val json = org.json.JSONObject(headers)
+                    val result = LinkedHashMap<String, String>()
+                    json.keys().forEach { key ->
+                        val value = json.optString(key, "")
+                        if (key.isNotEmpty() && value.isNotEmpty()) {
+                            result[key] = value
+                        }
+                    }
+                    return sanitizeHeaders(result)
+                }
+
+                // Legacy key=value&key=value format (backward compat)
                 val parsed = headers.split("&").associate { pair ->
                     val parts = pair.split("=", limit = 2)
                     if (parts.size == 2) {
@@ -626,8 +660,242 @@ internal class PlayerMediaSourceFactory(
             }
         }
 
-        internal fun inferMimeType(url: String, filename: String?): String? {
-            return inferMimeTypeFromPath(filename)
+        private fun obtainVodCache(context: Context, maxBytes: Long): SimpleCache? {
+            synchronized(vodCacheLock) {
+                if (isVodCacheDisabled) return null
+                val existing = sharedSimpleCache
+                // A running player may still be reading this cache, and the evictor cap cannot change
+                // on a live instance, so a resize waits for the next app start.
+                if (existing != null) {
+                    if (configuredVodCacheMaxBytes != maxBytes) {
+                        Log.i(LOG_TAG, "VOD_CACHE: keeping cap ${configuredVodCacheMaxBytes / (1024L * 1024L)}MB, ${maxBytes / (1024L * 1024L)}MB applies next launch")
+                    }
+                    return existing
+                }
+
+                val dir = File(context.applicationContext.cacheDir, VOD_CACHE_DIR_NAME)
+                // Clearing the last run in place raced the first title's writes, and a resumed title shares its key.
+                val movedAside = moveStaleVodCacheAside(dir)
+                var created = createVodCache(context, dir, maxBytes)
+                if (created == null) {
+                    // A crash mid-write can leave an index the cache cannot read, so drop it and rebuild once.
+                    Log.w(LOG_TAG, "VOD_CACHE: index unusable, rebuilding at ${dir.absolutePath}")
+                    dir.deleteRecursively()
+                    created = createVodCache(context, dir, maxBytes)
+                }
+
+                if (created == null) {
+                    isVodCacheDisabled = true
+                    Log.w(LOG_TAG, "VOD_CACHE: unavailable for this session, streaming direct")
+                } else {
+                    configuredVodCacheMaxBytes = maxBytes
+                    vodCacheBytesReadFromCache.set(0L)
+                    vodCacheSpansRemoved.set(0L)
+                    vodCacheBytesTrimmed.set(0L)
+                    vodCacheBytesRemoved.set(0L)
+                    vodCacheWriteCounters.reset()
+                    if (!movedAside) clearStaleVodCache(created)
+                }
+                deleteStaleVodCacheFolders(context)
+                sharedSimpleCache = created
+                return created
+            }
+        }
+
+        // A fifth of free space is too small on low-storage devices to hold the window a large remux keeps seeking back into.
+        internal fun resolveAutoVodCacheBytes(freeSpaceBytes: Long, minBytes: Long, runtimeMaxBytes: Long): Long =
+            maxOf(AUTO_VOD_CACHE_FLOOR_BYTES, freeSpaceBytes / 5L).coerceIn(minBytes, runtimeMaxBytes)
+
+        private fun createVodCache(context: Context, dir: File, maxBytes: Long): SimpleCache? {
+            var cache: SimpleCache? = null
+            return try {
+                dir.mkdirs()
+                val provider = vodDatabaseProvider(context)
+                val evictor = CountingCacheEvictor(maxBytes)
+                val built = SimpleCache(dir, evictor, provider)
+                vodCacheEvictor = evictor
+                cache = built
+                // SimpleCache stores an index failure instead of throwing, so touch it here to surface one now.
+                built.cacheSpace
+                built
+            } catch (_: Throwable) {
+                cache?.let(::releaseVodCacheQuietly)
+                null
+            }
+        }
+
+        // The live cache and the stale folder delete write to the same database.
+        private fun vodDatabaseProvider(context: Context): StandaloneDatabaseProvider =
+            synchronized(vodCacheLock) {
+                sharedVodDatabaseProvider
+                    ?: StandaloneDatabaseProvider(context.applicationContext).also { sharedVodDatabaseProvider = it }
+            }
+
+        private fun moveStaleVodCacheAside(dir: File): Boolean {
+            if (!dir.exists()) return true
+            return dir.renameTo(File(dir.parentFile, "$VOD_CACHE_STALE_PREFIX${System.currentTimeMillis()}"))
+        }
+
+        // Also picks up folders an earlier run was killed before it finished deleting.
+        private fun deleteStaleVodCacheFolders(context: Context) {
+            val appContext = context.applicationContext
+            vodCacheMaintenanceScope.launch {
+                val folders = appContext.cacheDir.listFiles { file ->
+                    file.name.startsWith(VOD_CACHE_STALE_PREFIX)
+                } ?: return@launch
+                for (folder in folders) {
+                    try {
+                        // Deleting the files alone would orphan the folder's index tables in the database.
+                        SimpleCache.delete(folder, vodDatabaseProvider(appContext))
+                    } catch (_: Throwable) {
+                        folder.deleteRecursively()
+                    }
+                }
+            }
+        }
+
+        private fun releaseVodCacheQuietly(cache: SimpleCache) {
+            try {
+                cache.release()
+            } catch (_: Throwable) {
+            }
+        }
+
+        private fun formatCacheBytes(bytes: Long): String {
+            val safe = bytes.coerceAtLeast(0L)
+            val gb = 1024L * 1024L * 1024L
+            return if (safe >= gb) {
+                String.format(Locale.US, "%.1f GB", safe.toDouble() / gb)
+            } else {
+                "${safe / (1024L * 1024L)} MB"
+            }
+        }
+
+        private fun currentVodCacheSpaceBytes(): Long {
+            val cache = sharedSimpleCache ?: return 0L
+            return try {
+                cache.cacheSpace
+            } catch (_: Throwable) {
+                0L
+            }
+        }
+
+        private fun vodCacheStatsSnapshot(): String {
+            val cache = sharedSimpleCache ?: return "none"
+            val space = try {
+                cache.cacheSpace
+            } catch (_: Throwable) {
+                -1L
+            }
+            return "space=${space / (1024L * 1024L)}MB " +
+                "cap=${configuredVodCacheMaxBytes / (1024L * 1024L)}MB " +
+                "hitKb=${vodCacheBytesReadFromCache.get() / 1024L} " +
+                "removedSpans=${vodCacheSpansRemoved.get()} " +
+                "removedBytes=${vodCacheBytesRemoved.get() / (1024L * 1024L)}MB " +
+                "trimmedBytes=${vodCacheBytesTrimmed.get() / (1024L * 1024L)}MB " +
+                "writtenBytes=${vodCacheWriteCounters.bytesWritten.get() / (1024L * 1024L)}MB " +
+                "writeMs=${vodCacheWriteCounters.writeTimeMs.get()} " +
+                "enqueueMs=${vodCacheWriteCounters.enqueueTimeMs.get()} " +
+                "writeBlockedMs=${vodCacheWriteCounters.blockedMs.get()} " +
+                "bufferMs=${vodCacheWriteCounters.bufferTimeNs.get() / 1_000_000L} " +
+                "copyMs=${vodCacheWriteCounters.copyTimeNs.get() / 1_000_000L} " +
+                "allocs=${vodCacheWriteCounters.allocations.get()} " +
+                "closeWaitMs=${vodCacheWriteCounters.closeWaitMs.get()} " +
+                "spans=${vodCacheWriteCounters.spans.get()} " +
+                "writeErrors=${vodCacheWriteCounters.errors.get()}"
+        }
+
+        private class CountingCacheEvictor(maxBytes: Long) : CacheEvictor {
+            private val delegate = LeastRecentlyUsedCacheEvictor(maxBytes)
+
+            override fun requiresCacheSpanTouches(): Boolean = delegate.requiresCacheSpanTouches()
+
+            override fun onCacheInitialized() = delegate.onCacheInitialized()
+
+            @Volatile
+            private var lastTrimPosition = 0L
+
+            // The evictor lives as long as the shared cache, so an anchor left by one title would sit
+            // ahead of the next title's playhead and hold its trimming still.
+            fun resetTrimAnchor() {
+                lastTrimPosition = 0L
+            }
+
+            override fun onStartFile(cache: Cache, key: String, position: Long, length: Long) {
+                trimBehindPlayhead(cache, key)
+                delegate.onStartFile(cache, key, position, length)
+            }
+
+            // Spans are ordered by position, so stop at the first one inside the window. Trimming
+            // every fragment copies the span set 8x more often than the window can move, so batch it.
+            private fun trimBehindPlayhead(cache: Cache, key: String) {
+                val playhead = runCatching { vodCachePlayheadBytesProvider?.invoke() }
+                    .getOrNull() ?: return
+                if (playhead <= 0L) return
+                val cutoff = playhead - VOD_CACHE_RETAIN_BEHIND_BYTES
+                if (cutoff <= 0L) return
+                // A back seek leaves the playhead behind the last trim, which reads as no progress
+                // and holds the window still rather than dropping what the seek is about to play.
+                if (playhead - lastTrimPosition < VOD_CACHE_TRIM_STEP_BYTES) return
+                lastTrimPosition = playhead
+                val spans = try {
+                    cache.getCachedSpans(key)
+                } catch (e: Exception) {
+                    return
+                }
+                for (span in spans) {
+                    if (span.position + span.length > cutoff) break
+                    try {
+                        val trimmed = span.length
+                        cache.removeSpan(span)
+                        vodCacheBytesTrimmed.addAndGet(trimmed)
+                    } catch (e: Exception) {
+                        // A span still locked by a reader stays until the next write.
+                        break
+                    }
+                }
+            }
+
+            override fun onSpanAdded(cache: Cache, span: CacheSpan) = delegate.onSpanAdded(cache, span)
+
+            // Counts stale-span cleanup as well as eviction, so treat a rising count as cache churn rather than eviction alone.
+            override fun onSpanRemoved(cache: Cache, span: CacheSpan) {
+                vodCacheSpansRemoved.incrementAndGet()
+                vodCacheBytesRemoved.addAndGet(span.length)
+                delegate.onSpanRemoved(cache, span)
+            }
+
+            override fun onSpanTouched(cache: Cache, oldSpan: CacheSpan, newSpan: CacheSpan) =
+                delegate.onSpanTouched(cache, oldSpan, newSpan)
+        }
+
+        private fun inferAdaptiveMimeTypeFromPath(path: String?): String? {
+            val normalized = path?.trim()?.lowercase(Locale.US)?.takeIf { it.isNotBlank() } ?: return null
+            val pathWithoutFragment = normalized.substringBefore('#')
+            val pathPart = pathWithoutFragment.substringBefore('?')
+            val fileName = pathPart.substringAfterLast('/')
+            val extension = fileName.substringAfterLast('.', missingDelimiterValue = "")
+            return when (extension) {
+                "m3u8", "m3u" -> MimeTypes.APPLICATION_M3U8
+                "mpd" -> MimeTypes.APPLICATION_MPD
+                "ism", "isml" -> MimeTypes.APPLICATION_SS
+                else -> null
+            }
+        }
+
+        internal fun inferMimeType(
+            url: String,
+            filename: String?,
+            responseHeaders: Map<String, String>? = null
+        ): String? {
+            val adaptiveMime = inferAdaptiveMimeTypeFromPath(filename)
+                ?: inferAdaptiveMimeTypeFromPath(url)
+            if (adaptiveMime != null) {
+                return adaptiveMime
+            }
+
+            return inferMimeTypeFromResponseHeaders(responseHeaders)
+                ?: inferMimeTypeFromPath(filename)
                 ?: inferMimeTypeFromPath(url)
         }
 
@@ -640,11 +908,28 @@ internal class PlayerMediaSourceFactory(
 
             return when (normalized) {
                 "application/vnd.apple.mpegurl",
+                "application/mpegurl",
                 "application/x-mpegurl",
                 "audio/mpegurl",
-                "audio/x-mpegurl" -> MimeTypes.APPLICATION_M3U8
+                "audio/x-mpegurl",
+                "application/m3u8" -> MimeTypes.APPLICATION_M3U8
 
-                "application/dash+xml" -> MimeTypes.APPLICATION_MPD
+                "application/dash+xml",
+                "video/vnd.mpeg.dash.mpd" -> MimeTypes.APPLICATION_MPD
+
+                "application/vnd.ms-sstr+xml" -> MimeTypes.APPLICATION_SS
+
+                "video/mp4",
+                "application/mp4",
+                "video/x-m4v" -> MimeTypes.VIDEO_MP4
+
+                "video/webm",
+                "audio/webm" -> MimeTypes.VIDEO_WEBM
+
+                "video/x-matroska",
+                "audio/x-matroska",
+                "video/mkv",
+                "audio/mkv" -> MimeTypes.VIDEO_MATROSKA
                 else -> null
             }
         }
@@ -666,98 +951,336 @@ internal class PlayerMediaSourceFactory(
         suspend fun probeMimeType(
             url: String,
             headers: Map<String, String>,
-            filename: String? = null
+            filename: String? = null,
+            responseHeaders: Map<String, String>? = null
         ): String? {
-            inferMimeType(url = url, filename = filename)?.let { return it }
+            return inferMimeType(
+                url = url,
+                filename = filename,
+                responseHeaders = responseHeaders
+            )
+        }
 
-            val sanitizedHeaders = sanitizeHeaders(headers)
+        /** Looks for a Blu-ray behind an HTTP stream that failed to parse. Never runs before playback. */
+        suspend fun probeBlurayLayout(
+            url: String,
+            headers: Map<String, String> = emptyMap()
+        ): BlurayPlaylistResolver.RemoteLayout? = withContext(Dispatchers.IO) {
+            BlurayPlaylistResolver.probeHttp(url, sanitizeHeaders(headers), PlayerPlaybackNetworking.playbackHttpClient)
+        }
 
-            return withContext(Dispatchers.IO) {
-                probeMimeTypeWithHead(url, sanitizedHeaders)
-                    ?: probeMimeTypeWithRangeGet(url, sanitizedHeaders)
+        suspend fun probeNetworkMimeType(
+            url: String,
+            headers: Map<String, String> = emptyMap()
+        ): String? = withContext(Dispatchers.IO) {
+            if (!url.startsWith("http://", ignoreCase = true) && !url.startsWith("https://", ignoreCase = true)) {
+                return@withContext null
             }
+            val sanitizedHeaders = sanitizeHeaders(headers)
+            val methods = listOf("HEAD", "GET")
+            for (method in methods) {
+                runCatching {
+                    val requestBuilder = Request.Builder().url(url)
+                    if (method == "GET") {
+                        requestBuilder.header("Range", "bytes=0-2048")
+                    }
+                    sanitizedHeaders.forEach { (key, value) ->
+                        if (!key.equals("Range", ignoreCase = true)) {
+                            requestBuilder.header(key, value)
+                        }
+                    }
+                    if (sanitizedHeaders.none { it.key.equals("User-Agent", ignoreCase = true) }) {
+                        requestBuilder.header("User-Agent", DEFAULT_USER_AGENT)
+                    }
+
+                    PlayerPlaybackNetworking.playbackHttpClient.newCall(requestBuilder.build()).execute().use { response ->
+                        if (!response.isSuccessful && response.code !in 200..308) {
+                            return@use null
+                        }
+
+                        val finalUrl = response.request.url.toString()
+                        inferAdaptiveMimeTypeFromPath(finalUrl)?.let { return@withContext it }
+
+                        val contentType = response.header("Content-Type")
+                        normalizeMimeType(contentType)?.let { return@withContext it }
+
+                        val responseHeadersMap = response.headers.names().associateWith { response.header(it).orEmpty() }
+                        inferMimeTypeFromResponseHeaders(responseHeadersMap)?.let { return@withContext it }
+
+                        if (method == "GET") {
+                            val snippet = response.body?.byteStream()?.use { stream ->
+                                val bytes = ByteArray(512)
+                                val read = stream.read(bytes)
+                                if (read > 0) String(bytes, 0, read, Charsets.UTF_8) else null
+                            }
+                            sniffManifestMimeType(snippet)?.let { return@withContext it }
+                        }
+
+                        inferMimeTypeFromPath(finalUrl)?.let { return@withContext it }
+                    }
+                }.getOrNull()?.let { return@withContext it }
+            }
+            null
+        }
+
+        private fun inferMimeTypeFromResponseHeaders(headers: Map<String, String>?): String? {
+            if (headers.isNullOrEmpty()) return null
+
+            val contentType = headers.entries
+                .firstOrNull { (key, _) -> key.equals("Content-Type", ignoreCase = true) }
+                ?.value
+            normalizeMimeType(contentType)?.let { return it }
+
+            val contentDisposition = headers.entries
+                .firstOrNull { (key, _) -> key.equals("Content-Disposition", ignoreCase = true) }
+                ?.value
+                ?: return null
+
+            val filename = contentDisposition
+                .substringAfter("filename*=", missingDelimiterValue = "")
+                .substringAfterLast("''", missingDelimiterValue = "")
+                .ifBlank {
+                    contentDisposition.substringAfter("filename=", missingDelimiterValue = "")
+                }
+                .trim()
+                .trim('"', '\'')
+                .takeIf { it.isNotBlank() }
+
+            return inferMimeTypeFromPath(filename)
         }
 
         private fun inferMimeTypeFromPath(path: String?): String? {
-            val normalized = path
-                ?.substringBefore('#')
-                ?.substringBefore('?')
-                ?.lowercase(Locale.US)
-                ?.trim()
-                ?: return null
+            val normalized = path?.trim()?.lowercase(Locale.US)?.takeIf { it.isNotBlank() } ?: return null
+            val pathWithoutFragment = normalized.substringBefore('#')
+            val pathPart = pathWithoutFragment.substringBefore('?')
+            val queryPart = pathWithoutFragment.substringAfter('?', missingDelimiterValue = "")
+            val fileName = pathPart.substringAfterLast('/')
+            val extension = fileName.substringAfterLast('.', missingDelimiterValue = "")
 
             return when {
-                normalized.endsWith(".m3u8") ||
-                    normalized.contains("/playlist") ||
-                    normalized.contains("/hls") ||
-                    normalized.contains("m3u8") -> MimeTypes.APPLICATION_M3U8
+                extension == "m3u8" || extension == "m3u" -> MimeTypes.APPLICATION_M3U8
+                extension == "mpd" -> MimeTypes.APPLICATION_MPD
+                extension == "ism" || extension == "isml" -> MimeTypes.APPLICATION_SS
+                extension == "mkv" -> MimeTypes.VIDEO_MATROSKA
+                extension == "webm" -> MimeTypes.VIDEO_WEBM
+                extension == "mp4" || extension == "m4v" -> MimeTypes.VIDEO_MP4
+                extension == "ts" || extension == "mts" || extension == "m2ts" -> MimeTypes.VIDEO_MP2T
+                extension == "mov" -> MIME_VIDEO_QUICK_TIME
+                extension == "avi" -> MimeTypes.VIDEO_AVI
+                extension == "mpeg" || extension == "mpg" -> MimeTypes.VIDEO_MPEG
+                else -> inferMimeTypeFromQuery(queryPart)
+                    ?: inferMimeTypeFromDelimitedToken(pathPart)
+                    ?: inferMimeTypeFromDelimitedToken(queryPart)
+            }
+        }
 
-                normalized.endsWith(".mpd") ||
-                    normalized.contains("/dash") -> MimeTypes.APPLICATION_MPD
+        private fun inferMimeTypeFromQuery(query: String): String? {
+            if (query.isBlank()) return null
 
+            query.split('&').forEach { parameter ->
+                val key = parameter.substringBefore('=', missingDelimiterValue = "").trim()
+                val value = parameter.substringAfter('=', missingDelimiterValue = "").trim()
+                if (key.isBlank() || value.isBlank()) return@forEach
+
+                when (key) {
+                    "format",
+                    "mime",
+                    "mime_type",
+                    "contenttype",
+                    "content_type",
+                    "type",
+                    "ext",
+                    "extension",
+                    "output",
+                    "protocol",
+                    "mode",
+                    "stream",
+                    "service" -> {
+                        when (value.substringAfterLast('/').substringAfterLast('.')) {
+                            "m3u8", "m3u" -> return MimeTypes.APPLICATION_M3U8
+                            "mpd" -> return MimeTypes.APPLICATION_MPD
+                            "ism", "isml" -> return MimeTypes.APPLICATION_SS
+                            "mkv" -> return MimeTypes.VIDEO_MATROSKA
+                            "webm" -> return MimeTypes.VIDEO_WEBM
+                            "mp4", "m4v" -> return MimeTypes.VIDEO_MP4
+                            "ts", "mts", "m2ts" -> return MimeTypes.VIDEO_MP2T
+                            "mov" -> return MIME_VIDEO_QUICK_TIME
+                            "avi" -> return MimeTypes.VIDEO_AVI
+                            "mpeg", "mpg" -> return MimeTypes.VIDEO_MPEG
+                        }
+                    }
+                }
+
+                when (value) {
+                    "application/vnd.apple.mpegurl",
+                    "application/mpegurl",
+                    "application/x-mpegurl",
+                    "audio/mpegurl",
+                    "audio/x-mpegurl",
+                    "application/m3u8",
+                    "m3u8",
+                    "m3u",
+                    "hls" -> return MimeTypes.APPLICATION_M3U8
+                    "application/dash+xml",
+                    "video/vnd.mpeg.dash.mpd",
+                    "dash" -> return MimeTypes.APPLICATION_MPD
+                    "application/vnd.ms-sstr+xml",
+                    "smoothstreaming",
+                    "ss" -> return MimeTypes.APPLICATION_SS
+                }
+            }
+
+            return null
+        }
+
+        private fun inferMimeTypeFromDelimitedToken(value: String): String? {
+            if (value.isBlank()) return null
+
+            return when {
+                DELIMITED_M3U8_PATTERN.containsMatchIn(value) -> MimeTypes.APPLICATION_M3U8
+                PLAYLIST_HLS_PATTERN.containsMatchIn(value) -> MimeTypes.APPLICATION_M3U8
+                DELIMITED_MPD_PATTERN.containsMatchIn(value) -> MimeTypes.APPLICATION_MPD
+                DELIMITED_SS_PATTERN.containsMatchIn(value) -> MimeTypes.APPLICATION_SS
                 else -> null
             }
         }
 
-        private fun probeMimeTypeWithHead(url: String, headers: Map<String, String>): String? {
-            val connection = openConnection(url = url, headers = headers, method = "HEAD")
-            return try {
-                connection.responseCode
-                normalizeMimeType(connection.contentType)
-                    ?: inferMimeType(url = connection.url?.toString().orEmpty(), filename = null)
-            } catch (_: Exception) {
-                null
-            } finally {
-                connection.disconnect()
+
+        private fun wrapAudioDelay(
+            mediaSource: MediaSource,
+            audioDelayUsProvider: (() -> Long)?
+        ): MediaSource {
+            return if (audioDelayUsProvider == null) {
+                mediaSource
+            } else {
+                AudioDelayMediaSource(
+                    mediaSource = mediaSource,
+                    audioDelayUsProvider = audioDelayUsProvider
+                )
             }
         }
 
-        private fun probeMimeTypeWithRangeGet(url: String, headers: Map<String, String>): String? {
-            val connection = openConnection(
-                url = url,
-                headers = headers,
-                method = "GET",
-                range = "bytes=0-${PROBE_BYTES - 1}"
-            )
-            return try {
-                connection.responseCode
-                normalizeMimeType(connection.contentType)
-                    ?: inferMimeType(url = connection.url?.toString().orEmpty(), filename = null)
-                    ?: sniffManifestMimeType(readProbeSnippet(connection.inputStream))
-            } catch (_: Exception) {
-                null
-            } finally {
-                connection.disconnect()
-            }
-        }
+        private val DELIMITED_M3U8_PATTERN = Regex("(^|[=/_.?&-])(m3u8|m3u)($|[=/_.?&-])")
+        private val PLAYLIST_HLS_PATTERN = Regex("/(playlist|hls|manifest|master|vs)/(?!stream$|list$|info$|details$)[a-zA-Z0-9_/-]+$")
+        private val DELIMITED_MPD_PATTERN = Regex("(^|[=/_.?&-])mpd($|[=/_.?&-])")
+        private val DELIMITED_SS_PATTERN = Regex("(^|[=/_.?&-])(ism|isml)($|[=/_.?&-])")
 
-        private fun openConnection(
+        /**
+         * Extracts `user:pass` from a URL's userinfo component and converts it
+         * to a Basic Auth header. Returns the cleaned URL (without userinfo) and
+         * merged headers. If the URL has no userinfo, returns the original URL and headers unchanged.
+         *
+         * The returned URL has no userinfo, and the returned headers carry Basic auth.
+         */
+        fun extractUserInfoAuth(
             url: String,
-            headers: Map<String, String>,
-            method: String,
-            range: String? = null
-        ): HttpURLConnection {
-            return (URL(url).openConnection() as HttpURLConnection).apply {
-                instanceFollowRedirects = true
-                connectTimeout = PROBE_TIMEOUT_MS
-                readTimeout = PROBE_TIMEOUT_MS
-                requestMethod = method
-                setRequestProperty("User-Agent", headers["User-Agent"] ?: DEFAULT_USER_AGENT)
-                headers.forEach { (key, value) ->
-                    if (key.equals("Range", ignoreCase = true)) return@forEach
-                    if (key.equals("User-Agent", ignoreCase = true)) return@forEach
-                    setRequestProperty(key, value)
+            headers: Map<String, String>
+        ): Pair<String, Map<String, String>> {
+            if (url.isBlank()) return url to headers
+            val uri = try { java.net.URI(url) } catch (_: Exception) { return url to headers }
+            val rawUserInfo = uri.rawAuthority
+                ?.substringBeforeLast('@', missingDelimiterValue = "")
+                ?.takeIf { it.isNotBlank() }
+            val userInfo = uri.userInfo ?: rawUserInfo?.let(::decodeRawUserInfo) ?: return url to headers
+            if (userInfo.isBlank()) return url to headers
+            val cleanUrl = stripRawUserInfo(uri) ?: return url to headers
+            val mergedHeaders = LinkedHashMap(headers)
+            if (headers.none { it.key.equals("Authorization", ignoreCase = true) }) {
+                val encoded = Base64.getEncoder().encodeToString(userInfo.toByteArray(Charsets.UTF_8))
+                mergedHeaders["Authorization"] = "Basic $encoded"
+            }
+            return cleanUrl to mergedHeaders
+        }
+
+        private fun stripRawUserInfo(uri: java.net.URI): String? {
+            val scheme = uri.scheme?.takeIf { it.isNotBlank() } ?: return null
+            val rawAuthority = uri.rawAuthority?.takeIf { it.isNotBlank() } ?: return null
+            val cleanAuthority = rawAuthority.substringAfterLast('@', missingDelimiterValue = rawAuthority)
+                .takeIf { it != rawAuthority && it.isNotBlank() }
+                ?: return null
+            return buildString {
+                append(scheme)
+                append("://")
+                append(cleanAuthority)
+                append(uri.rawPath.orEmpty())
+                uri.rawQuery?.let {
+                    append('?')
+                    append(it)
                 }
-                range?.let { setRequestProperty("Range", it) }
+                uri.rawFragment?.let {
+                    append('#')
+                    append(it)
+                }
             }
         }
 
-        private fun readProbeSnippet(inputStream: InputStream?): String? {
-            if (inputStream == null) return null
-            val buffer = ByteArray(PROBE_BYTES)
-            val read = inputStream.read(buffer)
-            if (read <= 0) return null
-            return String(buffer, 0, read, Charsets.UTF_8)
-        }
+        private fun decodeRawUserInfo(value: String): String? =
+            runCatching {
+                URLDecoder.decode(value.replace("+", "%2B"), Charsets.UTF_8.name())
+            }.getOrNull()
     }
 }
+
+private inline fun <reified T : Throwable> Throwable.findCause(): T? {
+    var current: Throwable? = this
+    while (current != null) {
+        if (current is T) return current
+        current = current.cause
+    }
+    return null
+}
+
+private class PlayerLoadErrorHandlingPolicy : DefaultLoadErrorHandlingPolicy(6) {
+    override fun getFallbackSelectionFor(
+        fallbackOptions: LoadErrorHandlingPolicy.FallbackOptions,
+        loadErrorInfo: LoadErrorHandlingPolicy.LoadErrorInfo
+    ): LoadErrorHandlingPolicy.FallbackSelection? {
+        val responseCode = loadErrorInfo.exception
+            .findCause<androidx.media3.datasource.HttpDataSource.InvalidResponseCodeException>()
+            ?.responseCode
+        if (
+            shouldPreferAlternativeHlsTrack(
+                responseCode = responseCode,
+                dataType = loadErrorInfo.mediaLoadData.dataType,
+                alternativeTrackAvailable = fallbackOptions.isFallbackAvailable(
+                    LoadErrorHandlingPolicy.FALLBACK_TYPE_TRACK
+                )
+            )
+        ) {
+            // A media-segment 404 belongs to the selected rendition. Exclude that
+            // rendition first so HLS can continue with another compatible track.
+            return LoadErrorHandlingPolicy.FallbackSelection(
+                LoadErrorHandlingPolicy.FALLBACK_TYPE_TRACK,
+                DefaultLoadErrorHandlingPolicy.DEFAULT_TRACK_EXCLUSION_MS
+            )
+        }
+        return super.getFallbackSelectionFor(fallbackOptions, loadErrorInfo)
+    }
+
+    override fun getRetryDelayMsFor(loadErrorInfo: LoadErrorHandlingPolicy.LoadErrorInfo): Long {
+        val httpException = loadErrorInfo.exception.findCause<androidx.media3.datasource.HttpDataSource.InvalidResponseCodeException>()
+        if (httpException != null) {
+            val code = httpException.responseCode
+            if (code == 400 || code == 401 || code == 403 || code == 404 || code == 410) {
+                return androidx.media3.common.C.TIME_UNSET
+            }
+        }
+        val timeout = loadErrorInfo.exception.findCause<SocketTimeoutException>() != null
+        return if (timeout) {
+            when (loadErrorInfo.errorCount) {
+                1 -> 750L
+                2 -> 1500L
+                else -> 3000L
+            }
+        } else super.getRetryDelayMsFor(loadErrorInfo)
+    }
+}
+
+internal fun shouldPreferAlternativeHlsTrack(
+    responseCode: Int?,
+    dataType: Int,
+    alternativeTrackAvailable: Boolean
+): Boolean =
+    responseCode == 404 &&
+        dataType == C.DATA_TYPE_MEDIA &&
+        alternativeTrackAvailable

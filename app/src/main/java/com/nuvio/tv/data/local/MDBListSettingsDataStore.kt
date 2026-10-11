@@ -32,6 +32,9 @@ class MDBListSettingsDataStore @Inject constructor(
     private val showTomatoesKey = booleanPreferencesKey("mdblist_show_tomatoes")
     private val showAudienceKey = booleanPreferencesKey("mdblist_show_audience")
     private val showMetacriticKey = booleanPreferencesKey("mdblist_show_metacritic")
+    private val showMalKey = booleanPreferencesKey("mdblist_show_mal")
+    private val showOnHeroKey = booleanPreferencesKey("mdblist_show_on_hero")
+    private val ratingOrderKey = stringPreferencesKey("mdblist_rating_order")
 
     val settings: Flow<MDBListSettings> = profileManager.activeProfileId.flatMapLatest { pid ->
         factory.get(pid, FEATURE).data.map { prefs ->
@@ -44,7 +47,11 @@ class MDBListSettingsDataStore @Inject constructor(
                 showLetterboxd = prefs[showLetterboxdKey] ?: true,
                 showTomatoes = prefs[showTomatoesKey] ?: true,
                 showAudience = prefs[showAudienceKey] ?: true,
-                showMetacritic = prefs[showMetacriticKey] ?: true
+                showMetacritic = prefs[showMetacriticKey] ?: true,
+                showMal = prefs[showMalKey] ?: true,
+                showOnHero = prefs[showOnHeroKey] ?: false,
+                ratingOrder = prefs[ratingOrderKey]?.split(",")?.filter { it.isNotBlank() }
+                    ?: MDBListSettings.DEFAULT_RATING_ORDER
             )
         }
     }
@@ -83,5 +90,17 @@ class MDBListSettingsDataStore @Inject constructor(
 
     suspend fun setShowMetacritic(enabled: Boolean) {
         store().edit { it[showMetacriticKey] = enabled }
+    }
+
+    suspend fun setShowMal(enabled: Boolean) {
+        store().edit { it[showMalKey] = enabled }
+    }
+
+    suspend fun setShowOnHero(enabled: Boolean) {
+        store().edit { it[showOnHeroKey] = enabled }
+    }
+
+    suspend fun setRatingOrder(order: List<String>) {
+        store().edit { it[ratingOrderKey] = order.joinToString(",") }
     }
 }
