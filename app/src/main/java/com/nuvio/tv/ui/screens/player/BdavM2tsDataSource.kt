@@ -65,11 +65,14 @@ internal class BdavM2tsDataSource(
                 .onFailure { closeError ->
                     Log.w(TAG, "open cleanup close failed: ${closeError.javaClass.simpleName}: ${closeError.message}")
                 }
-            Log.e(
-                TAG,
-                "open failed: uri=${summarizeUri(dataSpec.uri)} tsStart=$requestedTsStart srcStart=$requestedSourceStart reqLen=${dataSpec.length} mappedLen=$remappedLength",
-                error
-            )
+            // A seek cancels the load in flight; that is not a failure.
+            if (error.cause !is java.io.InterruptedIOException) {
+                Log.e(
+                    TAG,
+                    "open failed: uri=${summarizeUri(dataSpec.uri)} tsStart=$requestedTsStart srcStart=$requestedSourceStart reqLen=${dataSpec.length} mappedLen=$remappedLength",
+                    error
+                )
+            }
             throw error
         }
         sourcePosition = requestedSourceStart
