@@ -124,12 +124,15 @@ internal fun ManageListsDialog(
                             Button(
                                 onClick = { onSelect(tab.key) },
                                 enabled = !pending,
-                                modifier = if (tab.key == personalTabs.firstOrNull()?.key) {
+                                modifier = (if (tab.key == personalTabs.firstOrNull()?.key) {
                                     Modifier
                                         .fillMaxWidth()
                                         .focusRequester(firstFocusRequester)
                                 } else {
                                     Modifier.fillMaxWidth()
+                                }).semantics {
+                                    role = Role.Tab
+                                    this.selected = selected
                                 },
                                 colors = ButtonDefaults.colors(
                                     containerColor = if (selected) NuvioTheme.colors.FocusBackground else NuvioTheme.colors.BackgroundCard,

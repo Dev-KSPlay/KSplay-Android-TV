@@ -1102,6 +1102,10 @@ private fun SubtitleLanguageCard(
         onClick = onClick,
         modifier = Modifier
             .fillMaxWidth()
+            .semantics {
+                role = Role.RadioButton
+                this.selected = isSelected
+            }
             .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
             .onPreviewKeyEvent { event ->
                 when (event.nativeKeyEvent.keyCode) {

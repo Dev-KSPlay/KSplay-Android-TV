@@ -748,7 +748,11 @@ private fun LibraryViewModeRow(
                 Button(
                     onClick = { onSelected(mode) },
                     modifier = Modifier
-                        .then(if (selected) Modifier.focusRequester(primaryFocusRequester) else Modifier),
+                        .then(if (selected) Modifier.focusRequester(primaryFocusRequester) else Modifier)
+                        .semantics {
+                            role = Role.Tab
+                            this.selected = selected
+                        },
                     colors = ButtonDefaults.colors(
                         containerColor = if (selected) NuvioTheme.colors.FocusBackground else NuvioTheme.colors.BackgroundCard,
                         contentColor = NuvioTheme.colors.TextPrimary

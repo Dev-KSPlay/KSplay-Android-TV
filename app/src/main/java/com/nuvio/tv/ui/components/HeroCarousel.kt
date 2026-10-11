@@ -1,5 +1,11 @@
 package com.nuvio.tv.ui.components
 
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
+
 import com.nuvio.tv.ui.theme.NuvioTheme
 
 import android.graphics.ColorSpace
@@ -137,6 +143,14 @@ fun HeroCarousel(
                 isFocused = it.hasFocus || it.isFocused
             }
             .focusable()
+            .semantics {
+                role = Role.Button
+                contentDescription = items[activeIndex].name
+                onClick {
+                    currentOnItemClick(items[activeIndex])
+                    true
+                }
+            }
             .onPreviewKeyEvent { event ->
                 if (event.type == KeyEventType.KeyDown) {
                     when (event.key) {

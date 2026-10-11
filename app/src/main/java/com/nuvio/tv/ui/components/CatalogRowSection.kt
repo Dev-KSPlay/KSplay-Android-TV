@@ -1,5 +1,7 @@
 package com.nuvio.tv.ui.components
 
+import androidx.compose.ui.semantics.clearAndSetSemantics
+
 import com.nuvio.tv.ui.theme.NuvioTheme
 
 import androidx.compose.foundation.BorderStroke
@@ -465,7 +467,8 @@ fun CatalogRowSection(
                         modifier = Modifier
                             .width(loadingCardWidth)
                             .height(loadingCardHeight)
-                            .focusProperties { canFocus = false },
+                            .focusProperties { canFocus = false }
+                            .clearAndSetSemantics {},
                         shape = CardDefaults.shape(shape = seeAllCardShape),
                         colors = CardDefaults.colors(
                             containerColor = NuvioTheme.colors.BackgroundCard,
