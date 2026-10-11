@@ -5,6 +5,11 @@
 
 package com.nuvio.tv.ui.screens.player
 
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
+
 import android.view.KeyEvent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
@@ -655,6 +660,10 @@ private fun EpisodesSeasonTabs(
                 onClick = { onSeasonSelected(season) },
                 modifier = Modifier
                     .then(if (isSelected) Modifier.focusRequester(selectedTabFocusRequester) else Modifier)
+                    .semantics {
+                        role = Role.Tab
+                        this.selected = isSelected
+                    }
                     .onFocusChanged { isFocused = it.isFocused },
                 shape = CardDefaults.shape(shape = RoundedCornerShape(NuvioTheme.spacing.xl)),
                 colors = CardDefaults.colors(

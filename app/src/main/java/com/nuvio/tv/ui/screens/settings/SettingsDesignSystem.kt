@@ -516,6 +516,10 @@ internal fun SettingsTopBarTab(
     Card(
         onClick = onClick,
         modifier = appliedModifier
+            .semantics {
+                role = Role.Tab
+                this.selected = isSelected
+            }
             .onGloballyPositioned { coordinates ->
                 tabCoordinates = coordinates
                 if (isFocused) onFocusedTabPositioned?.invoke(coordinates)

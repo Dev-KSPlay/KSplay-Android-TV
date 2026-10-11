@@ -1,5 +1,8 @@
 package com.nuvio.tv.ui.screens.player
 
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.ui.input.pointer.pointerInput
+
 import android.view.KeyEvent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.tween
@@ -58,11 +61,9 @@ internal fun PlayerOverlayScaffold(
                 .fillMaxSize()
                 .then(
                     if (dismissOnBackgroundClick) {
-                        Modifier.clickable(
-                            interactionSource = interactionSource,
-                            indication = null,
-                            onClick = onDismiss
-                        )
+                        Modifier.pointerInput(Unit) {
+                            detectTapGestures(onTap = { onDismiss() })
+                        }
                     } else {
                         Modifier
                     }
