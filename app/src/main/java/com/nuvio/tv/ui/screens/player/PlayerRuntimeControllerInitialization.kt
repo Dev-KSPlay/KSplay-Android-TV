@@ -67,6 +67,7 @@ import com.nuvio.tv.core.player.BitrateAwareLoadControl
 import com.nuvio.tv.core.player.DolbyVisionConversionConfig
 import com.nuvio.tv.core.player.DolbyVisionConversionStats
 import com.nuvio.tv.core.player.DolbyVisionExtractorsFactory
+import com.nuvio.tv.core.player.asf.AsfExtractorsFactory
 import com.nuvio.tv.core.player.DoviBridge
 import com.nuvio.tv.core.player.LastPlaybackDiagnostics
 import com.nuvio.tv.core.tracking.TrackingScrobbleAction
@@ -805,9 +806,11 @@ internal fun PlayerRuntimeController.initializePlayer(
             }
 
             // ── Extractors & DV Hook ──
-            val extractorsFactory = DefaultExtractorsFactory()
-                .setTsExtractorFlags(DefaultTsPayloadReaderFactory.FLAG_ENABLE_HDMV_DTS_AUDIO_STREAMS)
-                .setTsExtractorTimestampSearchBytes(1500 * TsExtractor.TS_PACKET_SIZE)
+            val extractorsFactory: ExtractorsFactory = AsfExtractorsFactory(
+                DefaultExtractorsFactory()
+                    .setTsExtractorFlags(DefaultTsPayloadReaderFactory.FLAG_ENABLE_HDMV_DTS_AUDIO_STREAMS)
+                    .setTsExtractorTimestampSearchBytes(1500 * TsExtractor.TS_PACKET_SIZE)
+            )
 
             // Manual Convert-to-DV8.1 uses mode 2; if a prior attempt at this stream
             // failed to play, force mode 1 this time (before the HDR10 fallback).
@@ -842,7 +845,7 @@ internal fun PlayerRuntimeController.initializePlayer(
             isMapDv7ToHevcActiveForCurrentPlayback = mapDv7ToHevcEnabled
             val convertToDv81Active = !mapDv7ToHevcEnabled &&
                     dv7AutoResult?.decision == DolbyVisionBaseLayerPolicy.Decision.CONVERT_TO_DV81
-            val codecSelector = createDolbyVisionFallbackCodecSelector(
+            val dolbyVisionCodecSelector = createDolbyVisionFallbackCodecSelector(
                 convertToDv81Active = convertToDv81Active
             )
             // Bluetooth media sink (A2DP / LE Audio): Media3 only advertises PCM. Do not attempt
@@ -864,6 +867,12 @@ internal fun PlayerRuntimeController.initializePlayer(
             } else {
                 playerSettings.decoderPriority
             }
+            val codecSelector = Vc1DecoderSelector.wrap(
+                base = dolbyVisionCodecSelector,
+                softwareRendererAvailable =
+                    effectiveDecoderPriority != DefaultRenderersFactory.EXTENSION_RENDERER_MODE_OFF,
+                forceSoftware = vc1SoftwareDecodeStreamUrls.contains(url)
+            )
             // A2DP is stereo; force a clean 2.0 downmix so surround content is audible and balanced.
             val bluetoothStereoDownmix = isBluetoothAudioOutput
             val effectiveDownmixEnabled = playerSettings.effectiveDownmixEnabled || bluetoothStereoDownmix
@@ -908,6 +917,7 @@ internal fun PlayerRuntimeController.initializePlayer(
                 playbackSpeedProvider = { _uiState.value.playbackSpeed },
                 initialForcePcm = hasTriedAudioPcmFallback || isBluetoothAudioOutput,
                 preferSoftwareAudioOnly = isBluetoothAudioOutput,
+                mapDv7ToHevc = mapDv7ToHevcEnabled,
                 onPlaybackSpeedAwareAudioSinkCreated = { playbackSpeedAwareAudioSink = it },
                 onFfmpegAudioRendererChanged = { renderer ->
                     ffmpegAudioRenderer = renderer
@@ -1433,6 +1443,7 @@ internal fun PlayerRuntimeController.initializePlayer(
                                 currentStreamName = _uiState.value.currentStreamName ?: streamName ?: currentFilename
                             )
                         ) {
+                            if (!isInBackground && tryVc1DecoderStartRecovery(error)) return
                             handleVc1PlaybackFailure(errorMessage = detailedError)
                             return
                         }
@@ -2159,6 +2170,7 @@ private class SubtitleOffsetRenderersFactory(
      * platform MediaCodec path so Bluetooth PCM policy does not force software video decode.
      */
     private val preferSoftwareAudioOnly: Boolean = false,
+    private val mapDv7ToHevc: Boolean = false,
     private val onPlaybackSpeedAwareAudioSinkCreated: (PlaybackSpeedAwareAudioSink) -> Unit,
     private val onFfmpegAudioRendererChanged: (FfmpegAudioRenderer?) -> Unit
 ) : DefaultRenderersFactory(context) {
@@ -2188,6 +2200,45 @@ private class SubtitleOffsetRenderersFactory(
             allowedVideoJoiningTimeMs,
             out
         )
+        if (videoExtensionMode != EXTENSION_RENDERER_MODE_OFF &&
+            out.none { it.javaClass.simpleName.contains("FfmpegVideo") }
+        ) {
+            runCatching {
+                val clazz = Class.forName(
+                    "androidx.media3.decoder.ffmpeg.ExperimentalFfmpegVideoRenderer"
+                )
+                val ctor = clazz.getConstructor(
+                    Long::class.javaPrimitiveType,
+                    Handler::class.java,
+                    VideoRendererEventListener::class.java,
+                    Int::class.javaPrimitiveType
+                )
+                out.add(
+                    ctor.newInstance(
+                        allowedVideoJoiningTimeMs,
+                        eventHandler,
+                        eventListener,
+                        50
+                    ) as Renderer
+                )
+            }
+        }
+        // Swap the stock MediaCodec video renderer for the one that repairs decode-order times.
+        // The factory keeps its own settings private, so the ones the app changes are passed in.
+        val stockIndex = out.indexOfFirst { it.javaClass == MediaCodecVideoRenderer::class.java }
+        if (stockIndex >= 0) {
+            out[stockIndex] = DecodeOrderPtsVideoRenderer(
+                MediaCodecVideoRenderer.Builder(context)
+                    .setCodecAdapterFactory(getCodecAdapterFactory())
+                    .setMediaCodecSelector(mediaCodecSelector)
+                    .setAllowedJoiningTimeMs(allowedVideoJoiningTimeMs)
+                    .setEnableDecoderFallback(enableDecoderFallback)
+                    .setEventHandler(eventHandler)
+                    .setEventListener(eventListener)
+                    .setMaxDroppedFramesToNotify(MAX_DROPPED_VIDEO_FRAME_COUNT_TO_NOTIFY)
+                    .setMapDV7ToHevc(mapDv7ToHevc)
+            )
+        }
     }
 
     override fun buildAudioSink(
