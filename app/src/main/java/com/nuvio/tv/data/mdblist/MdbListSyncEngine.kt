@@ -15,8 +15,8 @@ class MdbListSyncEngine(
             full || expired || MdbListSyncBucket.WATCHED in previous.invalidatedBuckets -> remote.watched()
             activities.watchedChanged(previousActivities) -> {
                 val journal = remote.journal(watermark)
-                if (journal.requiresFullSync) remote.watched()
-                else applyMdbListJournal(previous, journal.items)
+                journal.takeUnless { it.requiresFullSync }?.let { applyMdbListJournal(previous, it.items) }
+                    ?: remote.watched()
             }
             else -> previous.watched
         }
@@ -49,7 +49,7 @@ class MdbListSyncEngine(
 internal fun applyMdbListJournal(
     snapshot: MdbListSyncSnapshot,
     journal: List<MdbListJournalRecord>
-): List<MdbListWatchedRecord> {
+): List<MdbListWatchedRecord>? {
     val index = MdbListMediaIndex(snapshot)
     journal.forEach { index.add(it.type, MdbListMedia(it.ids)) }
     val records = snapshot.watched.associateByTo(linkedMapOf()) { record ->
@@ -57,6 +57,8 @@ internal fun applyMdbListJournal(
     }
     journal.sortedBy { mdbListTimestamp(it.actionAt) }.forEach { change ->
         val media = index.resolve(change.type, change.ids)
+        // Journal rows omit IMDb ids, which Nuvio content ids rely on; only the full history carries them.
+        if (!change.removed && media.ids.imdb == null) return null
         val record = MdbListWatchedRecord(
             type = change.type,
             media = media,

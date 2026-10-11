@@ -59,6 +59,33 @@ class MdbListSyncEngineTest {
     }
 
     @Test
+    fun `journal additions without a known IMDb id fall back to the full watched history`() = runTest {
+        val remote = Remote().apply {
+            activities = activities.copy(values = activities.values + ("journal_at" to TIME))
+            journal = MdbListPage(listOf(change(2).copy(ids = MdbListIds(tmdb = 2, mdblist = "bf29"))))
+            watched = listOf(movie(), movie(2))
+        }
+
+        val result = MdbListSyncEngine(remote).synchronize(snapshot())
+
+        assertEquals(listOf("activities", "journal:$TIME", "watched"), remote.calls)
+        assertTrue(MdbListProgressProjection(result).isWatched("tt2", null, null))
+    }
+
+    @Test
+    fun `journal additions for known media resolve IMDb ids without a full fetch`() = runTest {
+        val remote = Remote().apply {
+            activities = activities.copy(values = activities.values + ("journal_at" to TIME))
+            journal = MdbListPage(listOf(change(1).copy(ids = MdbListIds(tmdb = 1, mdblist = "bf29"))))
+        }
+
+        val result = MdbListSyncEngine(remote).synchronize(snapshot())
+
+        assertEquals(listOf("activities", "journal:$TIME"), remote.calls)
+        assertTrue(MdbListProgressProjection(result).isWatched("tt1", null, null))
+    }
+
+    @Test
     fun `playback and dropped invalidations refresh only their own buckets`() = runTest {
         for ((key, expected) in listOf("paused_at" to "playback", "episode_paused_at" to "playback", "dropped_at" to "dropped")) {
             val remote = Remote().apply { activities = activities.copy(values = activities.values + (key to TIME)) }
@@ -107,7 +134,7 @@ class MdbListSyncEngineTest {
         val snapshot = snapshot().copy(watched = listOf(known))
         val update = change(1).copy(type = MdbListItemType.EPISODE, ids = MdbListIds(tmdb = 1, mdblist = "public"), season = 1, episode = 2)
 
-        val result = applyMdbListJournal(snapshot, listOf(update)).single()
+        val result = applyMdbListJournal(snapshot, listOf(update))!!.single()
 
         assertEquals("Movie 1", result.media.title)
         assertEquals("tt1", result.media.ids.imdb)
@@ -160,7 +187,7 @@ class MdbListSyncEngineTest {
     )
     private fun snapshot() = MdbListSyncSnapshot(42, watched = listOf(movie()), activities = Remote().activities, watermark = TIME, isInitialized = true)
     private fun change(id: Long, removed: Boolean = false) = MdbListJournalRecord(
-        MdbListItemType.MOVIE, MdbListIds(tmdb = id), removed, TIME, if (removed) null else "2020-01-01T00:00:00Z"
+        MdbListItemType.MOVIE, MdbListIds(imdb = "tt$id", tmdb = id), removed, TIME, if (removed) null else "2020-01-01T00:00:00Z"
     )
 
     private companion object {
