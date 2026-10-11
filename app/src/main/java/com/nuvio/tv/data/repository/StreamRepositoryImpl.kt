@@ -555,7 +555,9 @@ class StreamRepositoryImpl @Inject constructor(
         val qualityLabel = quality ?: context.getString(com.nuvio.tv.R.string.stream_quality_unknown)
         val displayName = buildString {
             append(baseName ?: baseTitle ?: scraper.name)
-            if (!toString().contains(qualityLabel)) {
+            // External URLs might not need the quality label, so don't show it unless it's
+            // specified.
+            if ((externalUrl == null && quality != null) && !toString().contains(qualityLabel)) {
                 append(" - ").append(qualityLabel)
             }
         }.takeIf { it.isNotBlank() }
@@ -566,20 +568,23 @@ class StreamRepositoryImpl @Inject constructor(
             title = displayTitle,
             url = url,
             addonName = addonName,
-            addonLogo = null,
+            addonLogo = scraper.logo,
             description = buildDescription(this),
             behaviorHints = headers?.let { headers ->
                 StreamBehaviorHints(
                     notWebReady = null,
-                    bingeGroup = null,
+                    bingeGroup = "local-plugin-${scraper.id}",
                     countryWhitelist = null,
-                    proxyHeaders = ProxyHeaders(request = headers, response = null)
+                    proxyHeaders = ProxyHeaders(request = headers, response = null),
+                    videoHash = videoHash,
+                    videoSize = videoSize,
+                    filename = filename,
                 )
             },
             infoHash = infoHash,
-            fileIdx = null,
-            ytId = null,
-            externalUrl = null,
+            fileIdx = fileIdx,
+            ytId = ytId,
+            externalUrl = externalUrl,
             quality = quality,
             qualityValue = parseQualityValue(quality),
             subtitles = subtitles

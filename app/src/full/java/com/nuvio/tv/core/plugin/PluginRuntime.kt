@@ -1589,14 +1589,14 @@ class PluginRuntime @Inject constructor() {
         return try {
             val listType = object : com.google.gson.reflect.TypeToken<List<Map<String, Any?>>>() {}.type
             val results: List<Map<String, Any?>>? = gson.fromJson(json, listType)
-            results?.mapNotNull { item ->
+            results?.map { item ->
                 // Handle URL - could be string or object with url property
                 val urlValue = item["url"]
                 val url = when (urlValue) {
                     is String -> urlValue.takeIf { it.isNotBlank() && !it.contains("[object") }
                     is Map<*, *> -> (urlValue["url"] as? String)?.takeIf { it.isNotBlank() }
                     else -> null
-                } ?: return@mapNotNull null
+                }
 
                 // Parse headers if present
                 val headersValue = item["headers"]
@@ -1614,6 +1614,8 @@ class PluginRuntime @Inject constructor() {
                         ?: "Unknown",
                     name = item["name"]?.toString()?.takeIf { !it.contains("[object") },
                     url = url,
+                    ytId = item["ytId"]?.toString(),
+                    externalUrl = item["externalUrl"]?.toString()?.takeIf { !it.contains("[object") },
                     quality = item["quality"]?.toString()?.takeIf { !it.contains("[object") },
                     size = item["size"]?.toString()?.takeIf { !it.contains("[object") },
                     language = item["language"]?.toString()?.takeIf { !it.contains("[object") },
@@ -1622,10 +1624,15 @@ class PluginRuntime @Inject constructor() {
                     seeders = (item["seeders"] as? Number)?.toInt(),
                     peers = (item["peers"] as? Number)?.toInt(),
                     infoHash = item["infoHash"]?.toString()?.takeIf { !it.contains("[object") },
+                    fileIdx = (item["fileIdx"] as? Number)?.toInt(),
                     headers = headers,
-                    subtitles = parseSubtitles(item["subtitles"])
+                    subtitles = parseSubtitles(item["subtitles"]),
+                    // Additional stream behavior hints. Could be useful for resolving subtitles.
+                    videoHash = (item["videoHash"] as? String),
+                    videoSize = (item["videoSize"] as? Long),
+                    filename = (item["filename"] as? String),
                 )
-            }?.filter { it.url.isNotBlank() } ?: emptyList()
+            } ?: emptyList()
         } catch (e: Exception) {
             Log.e(TAG, "Failed to parse results: ${e.message}")
             emptyList()
