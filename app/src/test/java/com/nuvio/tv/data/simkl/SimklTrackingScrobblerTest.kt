@@ -78,25 +78,26 @@ class SimklTrackingScrobblerTest {
     }
 
     @Test
-    fun `a playback stopped under the threshold reaches Simkl as a pause`() = runBlocking {
+    fun `a playback stopped under the threshold keeps the account's own pause`() = runBlocking {
         connect()
         val result = scrobbleResult(outcome = SimklScrobbleOutcome.PAUSE, progress = 45.0)
         accountAnswers(result)
 
         scrobbler.scrobble(TrackingScrobbleAction.STOP, event(progressPercent = 45.0))
 
-        // A stop sent from here would have Simkl apply its own 80 percent rule and mark the title
-        // watched anyway, so the pause is what the account is told about.
+        // The stop travels as a stop and carries the threshold it is judged by, so the account
+        // answers the pause itself and keeps the playback resumable. Nothing here has to guess what
+        // the account would do with its own 80 percent rule.
         coVerify {
             mutationService.scrobble(
-                action = TrackingScrobbleAction.PAUSE,
+                action = TrackingScrobbleAction.STOP,
                 event = any(),
                 recordRewatch = false,
                 completionThresholdPercent = 80.0
             )
         }
-        // The same action decides the local commit, so the playback is stored as the pause it was
-        // sent as and not as a finished one.
+        // The answered outcome decides the local commit, so the playback is stored as the pause the
+        // account kept.
         coVerify(exactly = 1) { syncRepository.commitScrobble(result) }
     }
 
@@ -182,18 +183,18 @@ class SimklTrackingScrobblerTest {
     }
 
     @Test
-    fun `the stored threshold moves where a stop is reported as a pause`() = runBlocking {
+    fun `the stored threshold decides when the account counts a stop as watched`() = runBlocking {
         connect()
         settingsDataStore.setSimklWatchedThresholdPercent(95)
         accountAnswers(scrobbleResult(outcome = SimklScrobbleOutcome.PAUSE, progress = 90.0))
 
         scrobbler.scrobble(TrackingScrobbleAction.STOP, event(progressPercent = 90.0))
 
-        // The user threshold is 95, so 90 percent is not a finished watch yet: a stop from here
-        // would be marked watched by Simkl under its own 80 percent rule.
+        // The user threshold is 95 and the stop carries it, so 90 percent is a pause for the
+        // account: the number on the call, not a rewritten action, is what keeps it one.
         coVerify {
             mutationService.scrobble(
-                action = TrackingScrobbleAction.PAUSE,
+                action = TrackingScrobbleAction.STOP,
                 event = any(),
                 recordRewatch = false,
                 completionThresholdPercent = 95.0
@@ -211,7 +212,7 @@ class SimklTrackingScrobblerTest {
 
         coVerify {
             mutationService.scrobble(
-                action = TrackingScrobbleAction.PAUSE,
+                action = TrackingScrobbleAction.STOP,
                 event = any(),
                 recordRewatch = false,
                 completionThresholdPercent = 95.0
@@ -249,7 +250,7 @@ class SimklTrackingScrobblerTest {
         accountAnswers(scrobbleResult(outcome = SimklScrobbleOutcome.PAUSE, progress = 90.0))
 
         // A marker at 80.5 percent is, after the tolerance, under what Simkl counts at all, so it
-        // cannot be used and the user threshold decides: 90 percent is a pause, not a finished playback.
+        // cannot be used and the user threshold decides: 95 percent, which a stop at 90 is under.
         scrobbler.scrobble(
             TrackingScrobbleAction.STOP,
             event(progressPercent = 90.0, contentEndPercent = 80.5)
@@ -257,7 +258,7 @@ class SimklTrackingScrobblerTest {
 
         coVerify {
             mutationService.scrobble(
-                action = TrackingScrobbleAction.PAUSE,
+                action = TrackingScrobbleAction.STOP,
                 event = any(),
                 recordRewatch = false,
                 completionThresholdPercent = 95.0
@@ -266,41 +267,29 @@ class SimklTrackingScrobblerTest {
     }
 
     @Test
-    fun `a stop under the threshold is reported as a pause`() {
-        assertEquals(
-            TrackingScrobbleAction.PAUSE,
-            simklReportingAction(
-                action = TrackingScrobbleAction.STOP,
-                progressPercent = 45.0,
-                completionThresholdPercent = 80.0
-            )
-        )
-        // The threshold itself is a finished playback: it is the number the user said the content
-        // ends at.
-        assertEquals(
+    fun `the threshold Simkl is told is a whole number`() = runBlocking {
+        connect()
+        settingsDataStore.setSimklWatchedThresholdPercent(95)
+        val result = scrobbleResult(outcome = SimklScrobbleOutcome.SCROBBLE, progress = 96.0)
+        accountAnswers(result)
+
+        // The marker says the content ends at 96.5 percent, so the playback is finished at 95.5
+        // after the tolerance. Simkl takes whole numbers and drops the decimals, so both sides
+        // decide with 95, which is the number the call carries.
+        scrobbler.scrobble(
             TrackingScrobbleAction.STOP,
-            simklReportingAction(
+            event(progressPercent = 96.0, contentEndPercent = 96.5)
+        )
+
+        coVerify {
+            mutationService.scrobble(
                 action = TrackingScrobbleAction.STOP,
-                progressPercent = 80.0,
-                completionThresholdPercent = 80.0
+                event = any(),
+                recordRewatch = false,
+                completionThresholdPercent = 95.0
             )
-        )
-        assertEquals(
-            TrackingScrobbleAction.PAUSE,
-            simklReportingAction(
-                action = TrackingScrobbleAction.PAUSE,
-                progressPercent = 45.0,
-                completionThresholdPercent = 80.0
-            )
-        )
-        assertEquals(
-            TrackingScrobbleAction.START,
-            simklReportingAction(
-                action = TrackingScrobbleAction.START,
-                progressPercent = 0.0,
-                completionThresholdPercent = 80.0
-            )
-        )
+        }
+        coVerify(exactly = 1) { syncRepository.commitScrobble(result) }
     }
 
     @Test

@@ -128,6 +128,14 @@ class SimklMutationService internal constructor(
         return receipt.result
     }
 
+    /**
+     * Reports one playback event to Simkl.
+     *
+     * The call carries [completionThresholdPercent] as `min_progress`, so the account judges the stop
+     * by the same number this client does: at or above it the item is marked watched, below it Simkl
+     * keeps a resumable pause, and a later start only completes the session it replaces once that
+     * session reached the number. There is no separate pause call for a low stop any more.
+     */
     internal suspend fun scrobble(
         action: TrackingScrobbleAction,
         event: TrackingScrobbleEvent,
@@ -147,7 +155,10 @@ class SimklMutationService internal constructor(
                 SimklApiRequest(
                     method = SimklHttpMethod.POST,
                     path = "/scrobble/${action.wireValue}",
-                    query = if (recordRewatch) SIMKL_ALLOW_REWATCH_QUERY else emptyMap(),
+                    query = simklScrobbleQuery(
+                        completionThresholdPercent = completionThresholdPercent,
+                        recordRewatch = recordRewatch
+                    ),
                     body = buildSimklScrobbleBody(event, json),
                     retryPolicy = SimklRetryPolicy.NEVER,
                     scrobbleStopConflictIsSuccess = action == TrackingScrobbleAction.STOP

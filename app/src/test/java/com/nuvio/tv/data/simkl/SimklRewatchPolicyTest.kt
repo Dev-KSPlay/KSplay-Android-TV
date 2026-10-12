@@ -28,6 +28,28 @@ class SimklRewatchPolicyTest {
     }
 
     @Test
+    fun `the threshold Simkl is told is a whole number inside its own range`() {
+        // Simkl drops the decimals, so the client decides with the same floored number it sends.
+        assertEquals(96, simklMinProgressPercent(96.0))
+        assertEquals(96, simklMinProgressPercent(96.7))
+        assertEquals(90, simklMinProgressPercent(90.5))
+        // The bounds Simkl documents: 1 to 49 counts as 50, above 100 counts as 100.
+        assertEquals(50, simklMinProgressPercent(20.0))
+        assertEquals(100, simklMinProgressPercent(140.0))
+        // No usable number falls back to the bar Simkl needs to record a watch at all.
+        assertEquals(80, simklMinProgressPercent(Double.NaN))
+    }
+
+    @Test
+    fun `a scrobble query carries the threshold and asks for a rewatch only where it may`() {
+        assertEquals(mapOf("min_progress" to "90"), simklScrobbleQuery(90.0, recordRewatch = false))
+        assertEquals(
+            mapOf("min_progress" to "90", "allow_rewatch" to "yes"),
+            simklScrobbleQuery(90.0, recordRewatch = true),
+        )
+    }
+
+    @Test
     fun `rewatch bookkeeping is off until the user asks for it`() {
         assertEquals(SimklRewatchMode.OFF, SimklRewatchMode.Default)
         assertEquals(SimklRewatchMode.OFF, SimklRewatchMode.fromStorage(null))
