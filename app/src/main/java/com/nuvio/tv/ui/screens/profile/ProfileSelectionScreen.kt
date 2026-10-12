@@ -21,7 +21,9 @@ import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.animation.core.infiniteRepeatable
@@ -2297,7 +2299,9 @@ private fun ProfilePinOverlay(
 
             Text(
                 text = supportText,
-                modifier = Modifier.widthIn(max = ProfileSelectionSpacing.PinSupportMaxWidth),
+                modifier = Modifier
+                    .widthIn(max = ProfileSelectionSpacing.PinSupportMaxWidth)
+                    .semantics { liveRegion = LiveRegionMode.Polite },
                 color = supportTextColor,
                 fontSize = supportFontSize.sp,
                 fontWeight = FontWeight.Medium,
