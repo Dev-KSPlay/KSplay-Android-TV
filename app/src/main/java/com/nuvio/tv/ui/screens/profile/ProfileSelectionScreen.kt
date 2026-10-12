@@ -2190,11 +2190,9 @@ private fun ProfilePinOverlay(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .clickable(
-                interactionSource = remember { MutableInteractionSource() },
-                indication = null,
-                onClick = { runCatching { focusRequester.requestFocus() } }
-            )
+            .pointerInput(Unit) {
+                detectTapGestures { runCatching { focusRequester.requestFocus() } }
+            }
             .onPreviewKeyEvent { event ->
                 val native = event.nativeKeyEvent
                 if (native.action != AndroidKeyEvent.ACTION_DOWN) {
