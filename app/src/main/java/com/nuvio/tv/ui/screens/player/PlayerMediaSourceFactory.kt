@@ -28,6 +28,7 @@ import androidx.media3.exoplayer.upstream.DefaultLoadErrorHandlingPolicy
 import androidx.media3.exoplayer.upstream.LoadErrorHandlingPolicy
 import androidx.media3.common.util.TimestampAdjuster
 import androidx.media3.extractor.DefaultExtractorsFactory
+import androidx.media3.extractor.Extractor
 import androidx.media3.extractor.ExtractorsFactory
 import androidx.media3.extractor.text.SubtitleParser
 import androidx.media3.extractor.ts.DefaultTsPayloadReaderFactory
@@ -319,7 +320,7 @@ internal class PlayerMediaSourceFactory(private val context: Context) {
         val bdav = !isHls && !isDash &&
             (bluray == BlurayPlaylistResolver.RemoteLayout.BdavClip || BlurayPlaylistResolver.isLikelyBdavM2tsUrl(url))
         val mediaDataFactory = if (bdav) BdavM2tsDataSourceFactory(progressiveFactory) else progressiveFactory
-        val extractorsFactory = if (bdav) createBdavExtractorsFactory() else customExtractorsFactory ?: DefaultExtractorsFactory()
+        val extractorsFactory = if (bdav) createBdavExtractorsFactory(progressiveFactory) else customExtractorsFactory ?: DefaultExtractorsFactory()
         // MediaItem subtitle tracks load through this factory too; route addon subtitles through the
         // subtitle download path so they don't inherit the stream's headers and client.
         val defaultSourceFactory = if (subtitleConfigurations.isNotEmpty()) {
@@ -356,13 +357,24 @@ internal class PlayerMediaSourceFactory(private val context: Context) {
         return wrapAudioDelay(mediaSource = mediaSource, audioDelayUsProvider = audioDelayUsProvider)
     }
 
-    private fun createBdavExtractorsFactory(): ExtractorsFactory = ExtractorsFactory {
+    private fun createBdavExtractorsFactory(clipInfoSource: DataSource.Factory): ExtractorsFactory = object : ExtractorsFactory {
+        override fun createExtractors(): Array<Extractor> = arrayOf(createBdavTsExtractor())
+
+        // Called on the loading thread, once per clip, so the CLPI read stays off the main thread.
+        override fun createExtractors(uri: Uri, responseHeaders: Map<String, List<String>>): Array<Extractor> {
+            val languages = BlurayClipInfo.languages(uri, clipInfoSource)
+            val extractor = createBdavTsExtractor()
+            return arrayOf(if (languages.isEmpty()) extractor else BlurayClipInfo.LanguageExtractor(extractor, languages))
+        }
+    }
+
+    private fun createBdavTsExtractor(): Extractor {
         // Blu-ray carries DTS and TrueHD on HDMV stream types; splice info sections crash SpliceInfoDecoder.
         val payloadReaders = BdavTsPayloadReaderFactory.withDefaults(
             DefaultTsPayloadReaderFactory.FLAG_ENABLE_HDMV_DTS_AUDIO_STREAMS or
                 DefaultTsPayloadReaderFactory.FLAG_IGNORE_SPLICE_INFO_STREAM
         )
-        arrayOf(TsExtractor(TsExtractor.MODE_SINGLE_PMT, TimestampAdjuster(0), payloadReaders, BDAV_TIMESTAMP_SEARCH_BYTES))
+        return TsExtractor(TsExtractor.MODE_SINGLE_PMT, TimestampAdjuster(0), payloadReaders, BDAV_TIMESTAMP_SEARCH_BYTES)
     }
 
     /** One timeline over the playlist's clips, so the seek bar covers the whole feature. */
@@ -371,7 +383,7 @@ internal class PlayerMediaSourceFactory(private val context: Context) {
         dataSourceFactory: DataSource.Factory,
         subtitleConfigurations: List<MediaItem.SubtitleConfiguration>
     ): MediaSource {
-        val clipFactory = DefaultMediaSourceFactory(BdavM2tsDataSourceFactory(dataSourceFactory), createBdavExtractorsFactory())
+        val clipFactory = DefaultMediaSourceFactory(BdavM2tsDataSourceFactory(dataSourceFactory), createBdavExtractorsFactory(dataSourceFactory))
             .setLoadErrorHandlingPolicy(loadErrorHandlingPolicy)
         val builder = ConcatenatingMediaSource2.Builder()
         segmentUrls.forEach { segmentUrl ->
