@@ -26,6 +26,7 @@ import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.source.MediaSource
 import androidx.media3.exoplayer.upstream.DefaultLoadErrorHandlingPolicy
 import androidx.media3.exoplayer.upstream.LoadErrorHandlingPolicy
+import androidx.media3.common.util.TimestampAdjuster
 import androidx.media3.extractor.DefaultExtractorsFactory
 import androidx.media3.extractor.ExtractorsFactory
 import androidx.media3.extractor.text.SubtitleParser
@@ -355,13 +356,14 @@ internal class PlayerMediaSourceFactory(private val context: Context) {
         return wrapAudioDelay(mediaSource = mediaSource, audioDelayUsProvider = audioDelayUsProvider)
     }
 
-    private fun createBdavExtractorsFactory(): ExtractorsFactory = DefaultExtractorsFactory()
-        // Blu-ray carries DTS on HDMV stream types; splice info sections crash SpliceInfoDecoder.
-        .setTsExtractorFlags(
+    private fun createBdavExtractorsFactory(): ExtractorsFactory = ExtractorsFactory {
+        // Blu-ray carries DTS and TrueHD on HDMV stream types; splice info sections crash SpliceInfoDecoder.
+        val payloadReaders = BdavTsPayloadReaderFactory.withDefaults(
             DefaultTsPayloadReaderFactory.FLAG_ENABLE_HDMV_DTS_AUDIO_STREAMS or
                 DefaultTsPayloadReaderFactory.FLAG_IGNORE_SPLICE_INFO_STREAM
         )
-        .setTsExtractorTimestampSearchBytes(1500 * TsExtractor.TS_PACKET_SIZE)
+        arrayOf(TsExtractor(TsExtractor.MODE_SINGLE_PMT, TimestampAdjuster(0), payloadReaders, 1500 * TsExtractor.TS_PACKET_SIZE))
+    }
 
     /** One timeline over the playlist's clips, so the seek bar covers the whole feature. */
     private fun createBlurayPlaylistSource(
