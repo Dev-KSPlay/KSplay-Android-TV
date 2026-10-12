@@ -632,10 +632,11 @@ fun EpisodesRow(
  * How solid the watched marker is on an episode a rewatch in progress has not reached yet.
  *
  * A value rather than a number in the drawing code, so the look can be tuned without touching the
- * layout: the marker is the same one the app has always drawn, only half of it while a run owns the
- * meaning of a full one.
+ * layout: the marker is the same one the app has always drawn, only faded while a run owns the
+ * meaning of a full one. The fade has to be deep enough to read as "not this run's yet" next to a
+ * solid marker on a TV at viewing distance, which 0.45 did not.
  */
-private const val REWATCH_PENDING_MARKER_ALPHA = 0.45f
+private const val REWATCH_PENDING_MARKER_ALPHA = 0.35f
 
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
