@@ -2015,7 +2015,7 @@ data class StreamPlaybackInfo(
     val fileIdx: Int? = null,
     val sources: List<String>? = null,
     val contentLanguage: String? = null,
-    val audioDelayMs: Int? = null
+    val audioDelayMs: Int? = null,
     val isServerStream: Boolean = false
 )
 
