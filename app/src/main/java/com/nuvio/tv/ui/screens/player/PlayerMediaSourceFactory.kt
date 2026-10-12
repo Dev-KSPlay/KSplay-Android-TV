@@ -362,7 +362,7 @@ internal class PlayerMediaSourceFactory(private val context: Context) {
             DefaultTsPayloadReaderFactory.FLAG_ENABLE_HDMV_DTS_AUDIO_STREAMS or
                 DefaultTsPayloadReaderFactory.FLAG_IGNORE_SPLICE_INFO_STREAM
         )
-        arrayOf(TsExtractor(TsExtractor.MODE_SINGLE_PMT, TimestampAdjuster(0), payloadReaders, 1500 * TsExtractor.TS_PACKET_SIZE))
+        arrayOf(TsExtractor(TsExtractor.MODE_SINGLE_PMT, TimestampAdjuster(0), payloadReaders, BDAV_TIMESTAMP_SEARCH_BYTES))
     }
 
     /** One timeline over the playlist's clips, so the seek bar covers the whole feature. */
@@ -486,6 +486,9 @@ internal class PlayerMediaSourceFactory(private val context: Context) {
         private const val VOD_CACHE_RETAIN_BEHIND_BYTES = 1024L * 1024L * 1024L
         private const val VOD_CACHE_TRIM_STEP_BYTES = 64L * 1024L * 1024L
         private const val LOG_TAG = "PlayerMediaSource"
+        // Blu-ray sends a PCR up to every 100 ms, on its own PID: over 1 MB apart at UHD rates.
+        // A seek probe that sees none gives up and reads on from 5% before the target.
+        private const val BDAV_TIMESTAMP_SEARCH_BYTES = 10_000 * TsExtractor.TS_PACKET_SIZE
         private const val AUTO_VOD_CACHE_FLOOR_BYTES = 2L * 1024L * 1024L * 1024L
         internal const val DEFAULT_USER_AGENT =
             "Mozilla/5.0 (Linux; Android 13; Android TV) AppleWebKit/537.36 " +
