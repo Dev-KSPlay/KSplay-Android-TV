@@ -1,10 +1,13 @@
 package com.nuvio.tv.ui.screens.settings
 
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.nuvio.tv.R
 import com.nuvio.tv.data.local.AVAILABLE_SUBTITLE_LANGUAGES
 import com.nuvio.tv.data.local.LibassRenderType
@@ -12,6 +15,7 @@ import com.nuvio.tv.data.local.PlayerPreference
 import com.nuvio.tv.data.local.PlayerSettings
 import com.nuvio.tv.data.local.SubtitleLanguageOption
 import com.nuvio.tv.data.local.SubtitleStyleSettings
+import com.nuvio.tv.data.local.TrailerSettings
 import com.nuvio.tv.data.local.displayName
 
 private val subtitleColors = listOf(
@@ -91,6 +95,25 @@ internal fun PlaybackSubtitlesSection(
         onToggle = { onUpdate { setSubtitleStripSdh(!style.stripSdh) } },
         enabled = enabled
     )
+    // Resolves to the screen's own ViewModel instance (same ViewModelStoreOwner).
+    val trailerSettings by hiltViewModel<PlaybackSettingsViewModel>().trailerSettings
+        .collectAsStateWithLifecycle(initialValue = TrailerSettings())
+    SettingsToggleRow(
+        title = stringResource(R.string.sub_trailer_subtitles),
+        subtitle = stringResource(R.string.sub_trailer_subtitles_desc),
+        checked = trailerSettings.subtitlesEnabled,
+        onToggle = { onUpdate { setTrailerSubtitlesEnabled(!trailerSettings.subtitlesEnabled) } },
+        enabled = enabled
+    )
+    if (trailerSettings.subtitlesEnabled) {
+        SettingsToggleRow(
+            title = stringResource(R.string.sub_trailer_subtitles_sdh),
+            subtitle = stringResource(R.string.sub_trailer_subtitles_sdh_desc),
+            checked = trailerSettings.subtitlesSdhFilterEnabled,
+            onToggle = { onUpdate { setTrailerSubtitlesSdhFilterEnabled(!trailerSettings.subtitlesSdhFilterEnabled) } },
+            enabled = enabled
+        )
+    }
 
     SettingsSectionLabel(text = stringResource(R.string.sub_style_label))
     SliderSettingsItem(
