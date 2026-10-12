@@ -38,6 +38,7 @@ internal fun PlayerRuntimeController.releasePlayer(flushPlaybackState: Boolean) 
     seekSourceLogJob?.cancel()
     seekSourceLogJob = null
     frameRateProbeJob?.cancel()
+    cancelAfrPreflight()
     hideStreamSourceIndicatorJob?.cancel()
     hideStreamSourceIndicatorJob = null
     _uiState.update { it.copy(showStreamSourceIndicator = false) }
@@ -56,6 +57,7 @@ internal fun PlayerRuntimeController.releasePlayer(flushPlaybackState: Boolean) 
     mpvMediaLoadPrepared = false
     nextEpisodeAutoPlayJob?.cancel()
     nextEpisodeAutoPlayJob = null
+    cancelNextEpisodePreload()
     debridResolveJob?.cancel()
     debridResolveJob = null
     stillWatchingPromptJob?.cancel()
@@ -64,6 +66,8 @@ internal fun PlayerRuntimeController.releasePlayer(flushPlaybackState: Boolean) 
     errorRetryJob = null
     stableProgressResetJob?.cancel()
     stableProgressResetJob = null
+    mpvStableProgressResetJob?.cancel()
+    mpvStableProgressResetJob = null
     releaseMpvPlayer()
     _exoPlayer?.let { player ->
         runCatching { player.playWhenReady = false }

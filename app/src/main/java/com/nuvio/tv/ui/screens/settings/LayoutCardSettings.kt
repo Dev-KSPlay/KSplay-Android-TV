@@ -173,7 +173,8 @@ internal fun LayoutFocusedPosterSection(
     onEvent: (LayoutSettingsEvent) -> Unit
 ) {
     val isModern = uiState.selectedLayout == HomeLayout.MODERN
-    val isModernLandscape = isModern && uiState.modernLandscapePostersEnabled
+    val isLandscapeActive = uiState.modernLandscapePostersEnabled
+    val isModernLandscape = isModern && isLandscapeActive
     val showAutoplayRow = AppFeaturePolicy.inAppTrailerPlaybackEnabled &&
         (uiState.focusedPosterBackdropExpandEnabled || isModernLandscape)
 
@@ -272,6 +273,14 @@ internal fun LayoutPosterCardSection(
         onSelected = { radius -> onEvent(LayoutSettingsEvent.SetPosterCardCornerRadius(radius)) }
     )
     SettingsToggleRow(
+        title = stringResource(R.string.layout_landscape_posters),
+        subtitle = stringResource(R.string.layout_landscape_posters_sub),
+        checked = uiState.modernLandscapePostersEnabled,
+        onToggle = {
+            onEvent(LayoutSettingsEvent.SetModernLandscapePostersEnabled(!uiState.modernLandscapePostersEnabled))
+        }
+    )
+    SettingsToggleRow(
         title = stringResource(R.string.layout_always_show_landscape_clearlogo),
         subtitle = stringResource(R.string.layout_always_show_landscape_clearlogo_sub),
         checked = uiState.alwaysShowLandscapeClearlogo,
@@ -360,7 +369,8 @@ internal fun LayoutCustomPosterSection(
             CustomPosterScreen.COLLECTIONS to R.string.layout_custom_poster_screen_collections,
             CustomPosterScreen.LIBRARY to R.string.layout_custom_poster_screen_library,
             CustomPosterScreen.SEARCH to R.string.layout_custom_poster_screen_search,
-            CustomPosterScreen.DETAILS to R.string.layout_custom_poster_screen_details
+            CustomPosterScreen.DETAILS to R.string.layout_custom_poster_screen_details,
+            CustomPosterScreen.TV_RECOMMENDATIONS to R.string.layout_custom_poster_screen_tv_recommendations
         ).forEach { (screen, label) ->
             val enabled = screen in uiState.customPosterEnabledScreens
             SettingsToggleRow(
