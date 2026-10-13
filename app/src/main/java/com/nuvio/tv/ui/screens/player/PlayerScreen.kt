@@ -46,6 +46,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.absoluteOffset
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
@@ -3672,9 +3673,12 @@ private fun DiscTitlesDialog(
                 )
 
                 LazyColumn(
+                    // A disc can carry many titles: the list scrolls within the screen.
+                    modifier = Modifier.heightIn(max = 380.dp),
                     state = listState,
                     verticalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.sm),
-                    contentPadding = PaddingValues(top = NuvioTheme.spacing.xs)
+                    // Room for the focused card's border at either end of the list.
+                    contentPadding = PaddingValues(vertical = NuvioTheme.spacing.sm)
                 ) {
                     itemsIndexed(titles) { index, title ->
                         DiscTitleItem(
