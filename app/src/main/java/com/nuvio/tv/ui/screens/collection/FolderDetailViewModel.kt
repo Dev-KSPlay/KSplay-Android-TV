@@ -964,7 +964,6 @@ class FolderDetailViewModel @Inject constructor(
         focusedRowKey: String?,
         focusedItemKeyByRow: Map<String, String>,
         catalogRowScrollStates: Map<String, Int>,
-        catalogRowScrollAnchors: Map<String, String>,
         focusedRowIndex: Int = 0,
         focusedItemIndex: Int = 0
     ) {
@@ -974,7 +973,6 @@ class FolderDetailViewModel @Inject constructor(
             focusedRowKey = focusedRowKey,
             focusedItemKeyByRow = focusedItemKeyByRow,
             catalogRowScrollStates = catalogRowScrollStates,
-            catalogRowScrollAnchors = catalogRowScrollAnchors,
             focusedRowIndex = focusedRowIndex,
             focusedItemIndex = focusedItemIndex,
             hasSavedFocus = true
@@ -990,7 +988,6 @@ class FolderDetailViewModel @Inject constructor(
         focusedRowKey: String?,
         focusedItemKeyByRow: Map<String, String>,
         catalogRowScrollStates: Map<String, Int>,
-        catalogRowScrollAnchors: Map<String, String>,
         focusedRowIndex: Int = 0,
         focusedItemIndex: Int = 0
     ) {
@@ -1000,7 +997,6 @@ class FolderDetailViewModel @Inject constructor(
             focusedRowKey = focusedRowKey,
             focusedItemKeyByRow = focusedItemKeyByRow,
             catalogRowScrollStates = catalogRowScrollStates,
-            catalogRowScrollAnchors = catalogRowScrollAnchors,
             focusedRowIndex = focusedRowIndex,
             focusedItemIndex = focusedItemIndex,
             hasSavedFocus = true
