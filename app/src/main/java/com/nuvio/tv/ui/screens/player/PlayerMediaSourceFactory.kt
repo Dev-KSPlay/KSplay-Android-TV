@@ -30,6 +30,7 @@ import androidx.media3.common.util.TimestampAdjuster
 import androidx.media3.extractor.DefaultExtractorsFactory
 import androidx.media3.extractor.Extractor
 import androidx.media3.extractor.ExtractorsFactory
+import androidx.media3.extractor.text.DefaultSubtitleParserFactory
 import androidx.media3.extractor.text.SubtitleParser
 import androidx.media3.extractor.ts.DefaultTsPayloadReaderFactory
 import androidx.media3.extractor.ts.TsExtractor
@@ -375,7 +376,15 @@ internal class PlayerMediaSourceFactory(private val context: Context) {
             DefaultTsPayloadReaderFactory.FLAG_ENABLE_HDMV_DTS_AUDIO_STREAMS or
                 DefaultTsPayloadReaderFactory.FLAG_IGNORE_SPLICE_INFO_STREAM
         )
-        return TsExtractor(TsExtractor.MODE_SINGLE_PMT, TimestampAdjuster(0), payloadReaders, BDAV_TIMESTAMP_SEARCH_BYTES)
+        // Subtitle samples, the disc's PGS among them, are parsed into cues here, as the text renderer expects.
+        return TsExtractor(
+            TsExtractor.MODE_SINGLE_PMT,
+            /* extractorFlags= */ 0,
+            DefaultSubtitleParserFactory(),
+            TimestampAdjuster(0),
+            payloadReaders,
+            BDAV_TIMESTAMP_SEARCH_BYTES
+        )
     }
 
     /** One timeline over the playlist's clips, so the seek bar covers the whole feature. */

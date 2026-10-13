@@ -13,8 +13,9 @@ import androidx.media3.extractor.ts.PesReader
 import androidx.media3.extractor.ts.TsPayloadReader
 
 /**
- * Adds Blu-ray Dolby TrueHD (HDMV stream type 0x83) to Media3's TS payload readers, which skip it.
- * Discs carry TrueHD and Atmos this way; without it a clip offers only its AC-3 tracks.
+ * Adds two Blu-ray stream types to Media3's TS payload readers, which skip them: Dolby TrueHD
+ * (HDMV stream type 0x83), without which a clip offers only its AC-3 tracks, and presentation
+ * graphics (0x90), the disc's subtitles.
  */
 internal class BdavTsPayloadReaderFactory(
     private val delegate: TsPayloadReader.Factory
@@ -22,14 +23,15 @@ internal class BdavTsPayloadReaderFactory(
     override fun createInitialPayloadReaders() = delegate.createInitialPayloadReaders()
 
     override fun createPayloadReader(streamType: Int, esInfo: TsPayloadReader.EsInfo): TsPayloadReader? =
-        if (streamType == STREAM_TYPE_HDMV_TRUEHD) {
-            PesReader(BdavTrueHdReader(esInfo.language, esInfo.roleFlags))
-        } else {
-            delegate.createPayloadReader(streamType, esInfo)
+        when (streamType) {
+            STREAM_TYPE_HDMV_TRUEHD -> PesReader(BdavTrueHdReader(esInfo.language, esInfo.roleFlags))
+            STREAM_TYPE_HDMV_PGS -> PesReader(BdavPgsReader(esInfo.language, esInfo.roleFlags))
+            else -> delegate.createPayloadReader(streamType, esInfo)
         }
 
     companion object {
         const val STREAM_TYPE_HDMV_TRUEHD = 0x83
+        const val STREAM_TYPE_HDMV_PGS = 0x90
 
         fun withDefaults(flags: Int) = BdavTsPayloadReaderFactory(DefaultTsPayloadReaderFactory(flags))
     }
