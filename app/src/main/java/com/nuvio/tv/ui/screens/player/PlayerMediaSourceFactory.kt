@@ -364,9 +364,9 @@ internal class PlayerMediaSourceFactory(private val context: Context) {
 
         // Called on the loading thread, once per clip, so the CLPI read stays off the main thread.
         override fun createExtractors(uri: Uri, responseHeaders: Map<String, List<String>>): Array<Extractor> {
-            val languages = BlurayClipInfo.languages(uri, clipInfoSource)
+            val info = BlurayClipInfo.info(uri, clipInfoSource)
             val extractor = createBdavTsExtractor()
-            return arrayOf(if (languages.isEmpty()) extractor else BlurayClipInfo.LanguageExtractor(extractor, languages))
+            return arrayOf(if (info.isEmpty) extractor else BlurayClipInfo.ClipInfoExtractor(extractor, info))
         }
     }
 
