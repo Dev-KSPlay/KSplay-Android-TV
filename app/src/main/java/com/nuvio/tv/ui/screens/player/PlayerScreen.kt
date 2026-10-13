@@ -2443,6 +2443,18 @@ private fun PlayerControlsOverlay(
                         onFocused = onResetHideTimer
                     )
 
+                    // In the main row: a disc's extras are easy to miss behind the more-actions button.
+                    if (uiState.discTitles.size > 1 && uiState.internalPlayerEngine != InternalPlayerEngine.MVP_PLAYER) {
+                        ControlButton(
+                            icon = Icons.Default.Album,
+                            contentDescription = stringResource(R.string.player_disc_titles),
+                            onClick = onShowDiscTitles,
+                            upFocusRequester = progressUpTarget,
+                            onDownKey = onHideControls,
+                            onFocused = onResetHideTimer
+                        )
+                    }
+
                     ControlButton(
                         icon = Icons.Default.SwapHoriz,
                         contentDescription = stringResource(R.string.cd_switch_player_engine),
@@ -2479,16 +2491,6 @@ private fun PlayerControlsOverlay(
                             horizontalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.xs),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            if (uiState.discTitles.size > 1 && uiState.internalPlayerEngine != InternalPlayerEngine.MVP_PLAYER) {
-                                ControlButton(
-                                    icon = Icons.Default.Album,
-                                    contentDescription = stringResource(R.string.player_disc_titles),
-                                    onClick = onShowDiscTitles,
-                                    upFocusRequester = progressUpTarget,
-                                    onDownKey = onHideControls,
-                                    onFocused = onResetHideTimer
-                                )
-                            }
                             ControlButton(
                                 icon = Icons.Default.Speed,
                                 contentDescription = stringResource(R.string.cd_playback_speed),
