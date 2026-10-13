@@ -637,6 +637,7 @@ class PlayerRuntimeController(
     internal var parsingErrorProbeAttempted: Boolean = false
     /** A Blu-ray found behind the current stream after it failed to parse. */
     internal var currentStreamBluray: BlurayPlaylistResolver.RemoteLayout? = null
+    internal var clipPlaylistProbedUrl: String? = null
     internal var hasRetriedCurrentStreamAfterUnexpectedNpe: Boolean = false
     internal var hasRetriedCurrentStreamAfterMediaPeriodHolderCrash: Boolean = false
     internal var timeoutRecoveryAttempts: Int = 0

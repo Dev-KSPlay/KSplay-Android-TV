@@ -5,6 +5,8 @@ import android.util.Log
 import java.io.File
 import java.nio.charset.StandardCharsets
 import java.util.Locale
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
@@ -17,10 +19,16 @@ internal object BlurayPlaylistResolver {
     private const val HTTP_PROBE_BYTES = 256 * 1024
     private const val HTTP_LISTING_BYTES = 512 * 1024
     private const val HTTP_MPLS_BYTES = 1024 * 1024
+    private const val MAX_CLIP_REPEATS = 2
+    private const val MAX_HTTP_PLAYLISTS = 1000
+    private const val HTTP_PLAYLIST_THREADS = 8
+    private val CLIP_PATH = Regex("(?i)/BDMV/(STREAM)/(\\d{5})\\.(m2ts)$")
 
     data class ResolvedBluraySource(
         val playlistFile: File,
-        val segments: List<File>
+        val segments: List<File>,
+        /** Each segment's play item duration, from the playlist. */
+        val durationsMs: List<Long> = emptyList()
     )
 
     /** What a probe of a failed HTTP stream found. */
@@ -29,14 +37,22 @@ internal object BlurayPlaylistResolver {
         data object BdavClip : RemoteLayout
 
         /** The stream is a web directory listing of a Blu-ray folder; play its longest playlist. */
-        data class Playlist(val name: String, val segmentUrls: List<String>) : RemoteLayout
+        data class Playlist(
+            val name: String,
+            val segmentUrls: List<String>,
+            val durationsMs: List<Long> = emptyList()
+        ) : RemoteLayout
     }
 
     data class ParsedMpls(
         val name: String,
         val clipIds: List<String>,
-        val duration90kHz: Long
-    )
+        val duration90kHz: Long,
+        /** Each clip's play item duration, in the playlist's 45 kHz ticks. */
+        val itemTicks: List<Long> = emptyList()
+    ) {
+        fun itemDurationMs(index: Int): Long = (itemTicks.getOrNull(index) ?: 0L) / 45
+    }
 
     private data class BlurayLocation(
         val bdmvDir: File,
@@ -73,14 +89,11 @@ internal object BlurayPlaylistResolver {
             }
             parseMpls(file.name, data)?.let { file to it }
         }
-        val (selectedFile, selected) = parsed.maxWithOrNull(
-            compareBy<Pair<File, ParsedMpls>> { it.second.duration90kHz }
-                .thenBy { it.second.clipIds.size }
-                .thenBy { it.second.name }
-        ) ?: run {
+        val selected = selectMainPlaylist(parsed.map { it.second }) ?: run {
             Log.w(TAG, "resolve: playlist parse failed for all .mpls files in ${location.bdmvDir.absolutePath}")
             return null
         }
+        val selectedFile = parsed.first { it.second === selected }.first
 
         val streamDir = findChildDirectory(location.bdmvDir, "STREAM")
         if (streamDir == null) {
@@ -93,12 +106,13 @@ internal object BlurayPlaylistResolver {
             .orEmpty()
 
         val missingClipIds = mutableListOf<String>()
-        val segments = selected.clipIds.mapNotNull { clipId ->
-            streamLookup["$clipId.m2ts".lowercase(Locale.US)] ?: run {
+        val found = selected.clipIds.withIndex().mapNotNull { (index, clipId) ->
+            streamLookup["$clipId.m2ts".lowercase(Locale.US)]?.let { it to selected.itemDurationMs(index) } ?: run {
                 missingClipIds += clipId
                 null
             }
         }
+        val segments = found.map { it.first }
         if (missingClipIds.isNotEmpty()) {
             val preview = missingClipIds.take(8).joinToString(",")
             val suffix = if (missingClipIds.size > 8) ", ..." else ""
@@ -108,7 +122,7 @@ internal object BlurayPlaylistResolver {
             Log.w(TAG, "resolve: selected playlist=${selected.name} resolved zero playable segments")
             return null
         }
-        return ResolvedBluraySource(playlistFile = selectedFile, segments = segments)
+        return ResolvedBluraySource(playlistFile = selectedFile, segments = segments, durationsMs = found.map { it.second })
     }
 
     /**
@@ -130,16 +144,60 @@ internal object BlurayPlaylistResolver {
             Log.w(TAG, "HTTP Blu-ray folder has no .mpls at ${playlistDirUrl.encodedPath}")
             return null
         }
-        val selected = playlistNames.mapNotNull { name ->
-            val playlistUrl = playlistDirUrl.resolve(name) ?: return@mapNotNull null
-            fetchBytes(client, playlistUrl, headers, HTTP_MPLS_BYTES)?.let { parseMpls(name, it) }
-        }.maxWithOrNull(
-            compareBy<ParsedMpls> { it.duration90kHz }.thenBy { it.clipIds.size }.thenBy { it.name }
-        ) ?: return null
+        val selected = selectMainPlaylist(fetchPlaylists(client, playlistDirUrl, headers, playlistNames)) ?: return null
 
         val streamDirUrl = rootUrl.resolve("BDMV/STREAM/") ?: return null
-        val segments = selected.clipIds.mapNotNull { clipId -> streamDirUrl.resolve("$clipId.m2ts")?.toString() }
-        return segments.takeIf { it.isNotEmpty() }?.let { RemoteLayout.Playlist(selected.name, it) }
+        val segments = selected.clipIds.withIndex().mapNotNull { (index, clipId) ->
+            streamDirUrl.resolve("$clipId.m2ts")?.let { it.toString() to selected.itemDurationMs(index) }
+        }
+        return segments.takeIf { it.isNotEmpty() }
+            ?.let { RemoteLayout.Playlist(selected.name, it.map { s -> s.first }, it.map { s -> s.second }) }
+    }
+
+    /**
+     * A clip of a Blu-ray folder served over HTTP, `.../BDMV/STREAM/<clip>.m2ts`, whose feature
+     * playlist names more clips: the playlist beside it, in `../PLAYLIST/`, that includes this clip.
+     * Null when the clip is the whole feature or the folder has no readable playlists. Blocking.
+     */
+    fun probeClipPlaylist(url: String, headers: Map<String, String>, client: OkHttpClient): RemoteLayout.Playlist? {
+        val httpUrl = url.toHttpUrlOrNull() ?: return null
+        val match = CLIP_PATH.find(httpUrl.encodedPath) ?: return null
+        val (stream, clipId, extension) = match.destructured
+        val playlistDir = if (stream == stream.lowercase(Locale.US)) "playlist" else "PLAYLIST"
+        val playlistDirUrl = httpUrl.resolve("../$playlistDir/") ?: return null
+        val listing = fetchBytes(client, playlistDirUrl, headers, HTTP_LISTING_BYTES) ?: return null
+        val names = extractPlaylistNames(String(listing, Charsets.UTF_8)).take(MAX_HTTP_PLAYLISTS)
+        if (names.isEmpty()) return null
+        val main = selectMainPlaylist(fetchPlaylists(client, playlistDirUrl, headers, names).filter { clipId in it.clipIds })
+            ?: return null
+        if (main.clipIds.all { it == clipId }) return null
+        val segments = main.clipIds.withIndex().mapNotNull { (index, id) ->
+            httpUrl.resolve("$id.$extension")?.let { it.toString() to main.itemDurationMs(index) }
+        }
+        Log.i(TAG, "clip $clipId is part of playlist ${main.name}: ${main.clipIds.size} clips")
+        return RemoteLayout.Playlist(main.name, segments.map { it.first }, segments.map { it.second })
+    }
+
+    /**
+     * The feature: the longest playlist that is not a loop. Discs carry menu and anti-copy
+     * playlists that repeat one short clip for hours; a feature names each clip once or twice.
+     */
+    fun selectMainPlaylist(playlists: List<ParsedMpls>): ParsedMpls? = playlists
+        .filter { playlist -> playlist.clipIds.groupingBy { it }.eachCount().values.all { it <= MAX_CLIP_REPEATS } }
+        .maxWithOrNull(compareBy<ParsedMpls> { it.duration90kHz }.thenBy { it.clipIds.size }.thenBy { it.name })
+
+    /** Playlists read a few at a time: a disc can carry hundreds. */
+    private fun fetchPlaylists(client: OkHttpClient, dir: HttpUrl, headers: Map<String, String>, names: List<String>): List<ParsedMpls> {
+        val pool = Executors.newFixedThreadPool(HTTP_PLAYLIST_THREADS)
+        return try {
+            names.map { name ->
+                pool.submit<ParsedMpls?> {
+                    dir.resolve(name)?.let { fetchBytes(client, it, headers, HTTP_MPLS_BYTES) }?.let { parseMpls(name, it) }
+                }
+            }.mapNotNull { future -> runCatching { future.get(30, TimeUnit.SECONDS) }.getOrNull() }
+        } finally {
+            pool.shutdownNow()
+        }
     }
 
     /** A sync byte after each 4-byte BDAV header, at a 192-byte stride, three packets running. */
@@ -159,6 +217,7 @@ internal object BlurayPlaylistResolver {
         var cursor = sectionStart + 6
 
         val clipIds = ArrayList<String>(playItemCount)
+        val itemTicks = ArrayList<Long>(playItemCount)
         var duration90kHz = 0L
         for (item in 0 until playItemCount) {
             if (cursor + 2 > data.size) break
@@ -169,15 +228,16 @@ internal object BlurayPlaylistResolver {
 
             val clipId = readAscii(data, itemStart, 5)
             val codecId = readAscii(data, itemStart + 5, 4)
-            if (clipId.length == 5 && clipId.all { it.isDigit() } && codecId.equals("M2TS", ignoreCase = true)) {
-                clipIds += clipId
-            }
             val inTime = readUInt32(data, itemStart + 12)
             val outTime = readUInt32(data, itemStart + 16)
+            if (clipId.length == 5 && clipId.all { it.isDigit() } && codecId.equals("M2TS", ignoreCase = true)) {
+                clipIds += clipId
+                itemTicks += if (outTime > inTime) outTime - inTime else 0L
+            }
             if (outTime > inTime) duration90kHz += outTime - inTime
             cursor = itemEnd
         }
-        return if (clipIds.isEmpty()) null else ParsedMpls(name, clipIds, duration90kHz)
+        return if (clipIds.isEmpty()) null else ParsedMpls(name, clipIds, duration90kHz, itemTicks)
     }
 
     fun looksLikeBlurayDirectoryHtml(content: String): Boolean {
