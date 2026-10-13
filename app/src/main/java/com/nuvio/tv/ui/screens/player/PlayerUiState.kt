@@ -94,6 +94,9 @@ data class PlayerUiState(
     val playerStatsHudButtonAvailable: Boolean = false,
     val showPauseOverlay: Boolean = false,
     val audioTracks: List<TrackInfo> = emptyList(),
+    val serverAudioTracks: List<TrackInfo> = emptyList(),
+    val serverSubtitleTracks: List<TrackInfo> = emptyList(),
+    val isServerStream: Boolean = false,
     val subtitleTracks: List<TrackInfo> = emptyList(),
     val selectedAudioTrackIndex: Int = -1,
     val selectedSubtitleTrackIndex: Int = -1,
@@ -226,7 +229,14 @@ data class PlayerUiState(
     val torrentBufferingProgress: Float = 0f,
     // When true, suppress all torrent stats text (buffer, seeds, peers, speed)
     // from loading overlay, rebuffering indicator, and corner overlay.
-    val hideTorrentStats: Boolean = true
+    val hideTorrentStats: Boolean = true,
+    val isLive: Boolean = false
+)
+
+internal fun PlayerUiState.clearFrameRateDetection(): PlayerUiState = copy(
+    detectedFrameRateRaw = 0f,
+    detectedFrameRate = 0f,
+    detectedFrameRateSource = null
 )
 
 data class PlaybackTimelineState(
@@ -395,5 +405,6 @@ data class StreamInfoData(
     val subtitleCodec: String? = null,
     val subtitleLanguage: String? = null,
     val subtitleSource: String? = null,
-    val playerEngine: String? = null
+    val playerEngine: String? = null,
+    val serverPlayback: String? = null
 )
