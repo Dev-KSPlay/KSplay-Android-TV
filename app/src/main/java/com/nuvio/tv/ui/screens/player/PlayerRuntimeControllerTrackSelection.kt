@@ -614,7 +614,8 @@ internal fun PlayerRuntimeController.attachAddonSubtitleViaMediaReload(subtitle:
             responseHeaders = currentStreamResponseHeaders,
             mimeTypeOverride = currentStreamMimeType,
             audioDelayUsProvider = audioDelayUs::get,
-            cacheKey = currentStreamCacheKey
+            cacheKey = currentStreamCacheKey,
+            bluray = currentStreamBluray
         ),
         currentPosition
     )
