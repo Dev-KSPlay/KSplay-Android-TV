@@ -3179,4 +3179,12 @@
     <string name="stream_test_error_prefix">Erro: %1$s</string>
     <string name="stream_test_video_bitrate">Taxa média de bits do vídeo: %1$s</string>
     <string name="stream_test_error_connection">Falha na conexão. O link do último stream reproduzido pode ter expirado ou estar inacessível. Por favor, reproduza o vídeo novamente e tente de novo.</string>
+    <string name="player_disc_titles">Títulos do disco</string>
+    <string name="player_disc_title_feature">Filme · %1$d min</string>
+    <string name="player_disc_title_extra">Extra · %1$d min</string>
+    <string name="player_disc_title_subtitles">Legendas %1$s</string>
+    <plurals name="player_disc_title_clips">
+        <item quantity="one">%d clipe</item>
+        <item quantity="other">%d clipes</item>
+    </plurals>
 </resources>

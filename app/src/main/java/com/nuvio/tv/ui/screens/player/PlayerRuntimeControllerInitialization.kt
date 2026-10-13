@@ -140,9 +140,11 @@ private suspend fun PlayerRuntimeController.resolveClipPlaylist(
     if (engine == InternalPlayerEngine.MVP_PLAYER || currentStreamBluray != null || clipPlaylistProbedUrl == url) return
     clipPlaylistProbedUrl = url
     if (!BlurayPlaylistResolver.isLikelyBdavM2tsUrl(url) || !url.contains("/BDMV/STREAM/", ignoreCase = true)) return
-    val playlist = withTimeoutOrNull(CLIP_PLAYLIST_TIMEOUT_MS) {
-        PlayerMediaSourceFactory.probeClipPlaylist(url = url, headers = headers)
+    val disc = withTimeoutOrNull(CLIP_PLAYLIST_TIMEOUT_MS) {
+        PlayerMediaSourceFactory.probeBlurayDisc(url = url, headers = headers)
     } ?: return
+    showDiscTitles(disc)
+    val playlist = disc.feature ?: return
     Log.i(
         PlayerRuntimeController.TAG,
         "Blu-ray clip is part of playlist ${playlist.name}; playing its ${playlist.segmentUrls.size} clips"

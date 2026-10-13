@@ -628,6 +628,7 @@ private fun PlayerRuntimeController.applySelectedStreamState(
     parsingErrorProbeAttempted = false
     currentStreamBluray = null
     clipPlaylistProbedUrl = null
+    resetDiscTitles()
     applyStreamMetadata(stream)
 }
 

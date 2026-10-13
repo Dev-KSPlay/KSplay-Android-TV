@@ -984,11 +984,20 @@ internal class PlayerMediaSourceFactory(private val context: Context) {
         }
 
         /** The feature playlist of a Blu-ray clip served over HTTP, when it names more clips than this one. */
-        suspend fun probeClipPlaylist(
+        suspend fun probeBlurayDisc(
             url: String,
             headers: Map<String, String> = emptyMap()
-        ): BlurayPlaylistResolver.RemoteLayout.Playlist? = withContext(Dispatchers.IO) {
-            BlurayPlaylistResolver.probeClipPlaylist(url, sanitizeHeaders(headers), PlayerPlaybackNetworking.playbackHttpClient)
+        ): BlurayPlaylistResolver.DiscProbe? = withContext(Dispatchers.IO) {
+            BlurayPlaylistResolver.probeDisc(url, sanitizeHeaders(headers), PlayerPlaybackNetworking.playbackHttpClient)
+        }
+
+        suspend fun probeBlurayTitleLanguages(
+            title: BlurayPlaylistResolver.RemoteLayout.Playlist,
+            headers: Map<String, String> = emptyMap()
+        ): Pair<List<String>, List<String>> = withContext(Dispatchers.IO) {
+            runCatching {
+                BlurayPlaylistResolver.titleLanguages(title, sanitizeHeaders(headers), PlayerPlaybackNetworking.playbackHttpClient)
+            }.getOrDefault(emptyList<String>() to emptyList())
         }
 
         /** Looks for a Blu-ray behind an HTTP stream that failed to parse. Never runs before playback. */

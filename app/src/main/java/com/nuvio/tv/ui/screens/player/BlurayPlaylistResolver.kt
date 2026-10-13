@@ -22,6 +22,8 @@ internal object BlurayPlaylistResolver {
     private const val MAX_CLIP_REPEATS = 2
     private const val MAX_HTTP_PLAYLISTS = 1000
     private const val HTTP_PLAYLIST_THREADS = 8
+    private const val MIN_TITLE_MS = 60_000L
+    private const val MAX_TITLES = 30
     private val CLIP_PATH = Regex("(?i)/BDMV/(STREAM)/(\\d{5})\\.(m2ts)$")
 
     data class ResolvedBluraySource(
@@ -44,6 +46,17 @@ internal object BlurayPlaylistResolver {
         ) : RemoteLayout
     }
 
+    /**
+     * What the playlists beside a clip say: the feature the clip belongs to, when it names more
+     * clips than this one, and the disc's titles, longest first.
+     */
+    data class DiscProbe(
+        val feature: RemoteLayout.Playlist?,
+        /** The playlist the clip plays as, itself or the feature; null when none names it. */
+        val currentTitle: String?,
+        val titles: List<RemoteLayout.Playlist>
+    )
+
     data class ParsedMpls(
         val name: String,
         val clipIds: List<String>,
@@ -52,6 +65,9 @@ internal object BlurayPlaylistResolver {
         val itemTicks: List<Long> = emptyList()
     ) {
         fun itemDurationMs(index: Int): Long = (itemTicks.getOrNull(index) ?: 0L) / 45
+
+        /** Play items run on a 45 kHz clock, whatever [duration90kHz] says. */
+        val durationMs: Long get() = duration90kHz / 45
     }
 
     private data class BlurayLocation(
@@ -159,7 +175,14 @@ internal object BlurayPlaylistResolver {
      * playlist names more clips: the playlist beside it, in `../PLAYLIST/`, that includes this clip.
      * Null when the clip is the whole feature or the folder has no readable playlists. Blocking.
      */
-    fun probeClipPlaylist(url: String, headers: Map<String, String>, client: OkHttpClient): RemoteLayout.Playlist? {
+    fun probeClipPlaylist(url: String, headers: Map<String, String>, client: OkHttpClient): RemoteLayout.Playlist? =
+        probeDisc(url, headers, client)?.feature
+
+    /**
+     * The playlists beside a Blu-ray clip served over HTTP: its feature, as [probeClipPlaylist]
+     * finds it, and the disc's titles. Null when the folder has no readable playlists. Blocking.
+     */
+    fun probeDisc(url: String, headers: Map<String, String>, client: OkHttpClient): DiscProbe? {
         val httpUrl = url.toHttpUrlOrNull() ?: return null
         val match = CLIP_PATH.find(httpUrl.encodedPath) ?: return null
         val (stream, clipId, extension) = match.destructured
@@ -168,14 +191,47 @@ internal object BlurayPlaylistResolver {
         val listing = fetchBytes(client, playlistDirUrl, headers, HTTP_LISTING_BYTES) ?: return null
         val names = extractPlaylistNames(String(listing, Charsets.UTF_8)).take(MAX_HTTP_PLAYLISTS)
         if (names.isEmpty()) return null
-        val main = selectMainPlaylist(fetchPlaylists(client, playlistDirUrl, headers, names).filter { clipId in it.clipIds })
-            ?: return null
-        if (main.clipIds.all { it == clipId }) return null
-        val segments = main.clipIds.withIndex().mapNotNull { (index, id) ->
-            httpUrl.resolve("$id.$extension")?.let { it.toString() to main.itemDurationMs(index) }
+        val playlists = fetchPlaylists(client, playlistDirUrl, headers, names)
+        if (playlists.isEmpty()) return null
+        fun remote(playlist: ParsedMpls): RemoteLayout.Playlist {
+            val segments = playlist.clipIds.withIndex().mapNotNull { (index, id) ->
+                httpUrl.resolve("$id.$extension")?.let { it.toString() to playlist.itemDurationMs(index) }
+            }
+            return RemoteLayout.Playlist(playlist.name, segments.map { it.first }, segments.map { it.second })
         }
-        Log.i(TAG, "clip $clipId is part of playlist ${main.name}: ${main.clipIds.size} clips")
-        return RemoteLayout.Playlist(main.name, segments.map { it.first }, segments.map { it.second })
+        val main = selectMainPlaylist(playlists.filter { clipId in it.clipIds })
+        val feature = main?.takeUnless { playlist -> playlist.clipIds.all { it == clipId } }?.let(::remote)
+        if (feature != null) Log.i(TAG, "clip $clipId is part of playlist ${feature.name}: ${feature.segmentUrls.size} clips")
+        return DiscProbe(feature = feature, currentTitle = main?.name, titles = selectTitles(playlists).map(::remote))
+    }
+
+    /**
+     * The titles a disc menu would offer: playlists that are not loops, a minute or longer, one
+     * per run of clips, longest first.
+     */
+    fun selectTitles(playlists: List<ParsedMpls>): List<ParsedMpls> = playlists
+        .filter { !it.isLoop() && it.durationMs >= MIN_TITLE_MS }
+        .sortedWith(compareByDescending<ParsedMpls> { it.duration90kHz }.thenBy { it.name })
+        .distinctBy { it.clipIds to it.durationMs / 1000 }
+        .take(MAX_TITLES)
+
+    private fun ParsedMpls.isLoop() = clipIds.groupingBy { it }.eachCount().values.any { it > MAX_CLIP_REPEATS }
+
+    /** A title's audio and subtitle languages, from its first clip's CLPI. Blocking. */
+    fun titleLanguages(
+        title: RemoteLayout.Playlist,
+        headers: Map<String, String>,
+        client: OkHttpClient
+    ): Pair<List<String>, List<String>> {
+        val clip = title.segmentUrls.firstOrNull()?.toHttpUrlOrNull() ?: return emptyList<String>() to emptyList()
+        val infoPath = BlurayClipInfo.clipInfoPath(clip.encodedPath) ?: return emptyList<String>() to emptyList()
+        val bytes = fetchBytes(client, clip.newBuilder().encodedPath(infoPath).build(), headers, HTTP_MPLS_BYTES)
+            ?: return emptyList<String>() to emptyList()
+        val languages = BlurayClipInfo.parseLanguages(bytes)
+        // Primary audio, then graphics and text subtitles, by their PID ranges.
+        fun among(vararg pids: IntRange) =
+            languages.filterKeys { pid -> pids.any { pid in it } }.toSortedMap().values.distinct()
+        return among(0x1100..0x111F) to among(0x1200..0x12FF, 0x1800..0x181F)
     }
 
     /**
@@ -183,7 +239,7 @@ internal object BlurayPlaylistResolver {
      * playlists that repeat one short clip for hours; a feature names each clip once or twice.
      */
     fun selectMainPlaylist(playlists: List<ParsedMpls>): ParsedMpls? = playlists
-        .filter { playlist -> playlist.clipIds.groupingBy { it }.eachCount().values.all { it <= MAX_CLIP_REPEATS } }
+        .filter { !it.isLoop() }
         .maxWithOrNull(compareBy<ParsedMpls> { it.duration90kHz }.thenBy { it.clipIds.size }.thenBy { it.name })
 
     /** Playlists read a few at a time: a disc can carry hundreds. */
