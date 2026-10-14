@@ -3,6 +3,7 @@ package com.nuvio.tv.domain.model
 import androidx.compose.runtime.Immutable
 import com.nuvio.tv.core.debrid.DebridProviders
 import com.nuvio.tv.data.mediaserver.ServerPlaybackTarget
+import kotlin.math.roundToInt
 
 /**
  * Represents a stream source from a Stremio addon
@@ -192,6 +193,13 @@ enum class StreamDebridCacheState {
 
 const val AUDIO_DELAY_MIN_MS = -60000
 const val AUDIO_DELAY_MAX_MS = 60000
+
+/** Normalizes a `behaviorHints.audioDelayMs` value: whole ms, NaN/Infinity dropped, clamped to ±60 s. */
+fun Number?.toStreamAudioDelayMs(): Int? =
+    this?.toDouble()
+        ?.takeIf { it.isFinite() }
+        ?.roundToInt()
+        ?.coerceIn(AUDIO_DELAY_MIN_MS, AUDIO_DELAY_MAX_MS)
 
 @Immutable
 data class StreamBehaviorHints(

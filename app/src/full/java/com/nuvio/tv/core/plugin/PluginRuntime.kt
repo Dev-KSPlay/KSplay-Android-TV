@@ -7,11 +7,9 @@ import com.dokar.quickjs.quickJs
 import com.google.gson.Gson
 import com.google.gson.GsonBuilder
 import com.nuvio.tv.BuildConfig
-import com.nuvio.tv.domain.model.AUDIO_DELAY_MAX_MS
-import com.nuvio.tv.domain.model.AUDIO_DELAY_MIN_MS
 import com.nuvio.tv.domain.model.LocalScraperResult
 import com.nuvio.tv.domain.model.Subtitle
-import kotlin.math.roundToInt
+import com.nuvio.tv.domain.model.toStreamAudioDelayMs
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withTimeout
@@ -1448,7 +1446,7 @@ class PluginRuntime @Inject constructor() {
                     headers = headers,
                     subtitles = parseSubtitles(item["subtitles"]),
                     audioDelayMs = ((item["behaviorHints"] as? Map<*, *>)?.get("audioDelayMs") as? Number)
-                        ?.toDouble()?.takeIf { it.isFinite() }?.roundToInt()?.coerceIn(AUDIO_DELAY_MIN_MS, AUDIO_DELAY_MAX_MS)
+                        .toStreamAudioDelayMs()
                 )
             }?.filter { it.url.isNotBlank() } ?: emptyList()
         } catch (e: Exception) {
