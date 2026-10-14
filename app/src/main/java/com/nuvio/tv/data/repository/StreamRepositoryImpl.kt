@@ -568,13 +568,14 @@ class StreamRepositoryImpl @Inject constructor(
             addonName = addonName,
             addonLogo = null,
             description = buildDescription(this),
-            behaviorHints = if (headers != null || audioDelayMs != null) {
+            behaviorHints = if (headers != null || audioDelayMs != null || audioDelayLanguage != null) {
                 StreamBehaviorHints(
                     notWebReady = null,
                     bingeGroup = null,
                     countryWhitelist = null,
                     proxyHeaders = headers?.let { ProxyHeaders(request = it, response = null) },
-                    audioDelayMs = audioDelayMs
+                    audioDelayMs = audioDelayMs,
+                    audioDelayLanguage = audioDelayLanguage
                 )
             } else {
                 null
