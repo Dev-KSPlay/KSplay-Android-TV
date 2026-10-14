@@ -7,6 +7,8 @@ import com.nuvio.tv.data.remote.dto.StreamClientResolveRawDto
 import com.nuvio.tv.data.remote.dto.StreamClientResolveStreamDto
 import com.nuvio.tv.data.remote.dto.StreamClientResolveDto
 import com.nuvio.tv.data.remote.dto.StreamDto
+import com.nuvio.tv.domain.model.AUDIO_DELAY_MAX_MS
+import com.nuvio.tv.domain.model.AUDIO_DELAY_MIN_MS
 import com.nuvio.tv.domain.model.ProxyHeaders
 import com.nuvio.tv.domain.model.Stream
 import com.nuvio.tv.domain.model.StreamBehaviorHints
@@ -15,6 +17,7 @@ import com.nuvio.tv.domain.model.StreamClientResolve
 import com.nuvio.tv.domain.model.StreamClientResolveParsed
 import com.nuvio.tv.domain.model.StreamClientResolveRaw
 import com.nuvio.tv.domain.model.StreamClientResolveStream
+import kotlin.math.roundToInt
 
 fun StreamDto.toDomain(addonName: String, addonLogo: String?): Stream = Stream(
     name = name,
@@ -112,7 +115,7 @@ fun BehaviorHintsDto.toDomain(): StreamBehaviorHints = StreamBehaviorHints(
     videoHash = videoHash,
     videoSize = videoSize,
     filename = filename,
-    audioDelayMs = audioDelayMs
+    audioDelayMs = audioDelayMs?.takeIf { it.isFinite() }?.roundToInt()?.coerceIn(AUDIO_DELAY_MIN_MS, AUDIO_DELAY_MAX_MS)
 )
 
 fun ProxyHeadersDto.toDomain(): ProxyHeaders = ProxyHeaders(

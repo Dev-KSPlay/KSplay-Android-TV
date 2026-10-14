@@ -190,6 +190,9 @@ enum class StreamDebridCacheState {
     UNKNOWN
 }
 
+const val AUDIO_DELAY_MIN_MS = -60000
+const val AUDIO_DELAY_MAX_MS = 60000
+
 @Immutable
 data class StreamBehaviorHints(
     val notWebReady: Boolean?,

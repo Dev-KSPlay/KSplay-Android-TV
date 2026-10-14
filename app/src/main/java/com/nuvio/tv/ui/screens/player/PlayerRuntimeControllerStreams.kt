@@ -636,7 +636,7 @@ private fun PlayerRuntimeController.applySelectedStreamState(
  */
 private fun PlayerRuntimeController.applyStreamMetadata(stream: Stream) {
     currentStreamBingeGroup = stream.behaviorHints?.bingeGroup
-    streamAudioDelayMs = stream.behaviorHints?.audioDelayMs ?: 0
+    streamAudioDelayMs = stream.behaviorHints?.audioDelayMs?.coerceIn(AUDIO_DELAY_MIN_MS, AUDIO_DELAY_MAX_MS) ?: 0
     applyStreamAudioDelay()
     currentVideoHash = stream.behaviorHints?.videoHash
     currentVideoSize = stream.behaviorHints?.videoSize
