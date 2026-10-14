@@ -155,24 +155,37 @@ internal fun PlayerRuntimeController.buildSourceRequestKey(type: String, videoId
     return "$type|$videoId|${season ?: -1}|${episode ?: -1}"
 }
 
+private data class SourceStreamsRequest(
+    val type: String,
+    val videoId: String,
+    val season: Int?,
+    val episode: Int?
+)
+
+private fun PlayerRuntimeController.currentSourceStreamsRequest(): SourceStreamsRequest? =
+    if (contentType in listOf("series", "tv") && currentSeason != null && currentEpisode != null) {
+        SourceStreamsRequest(
+            type = contentType ?: return null,
+            videoId = currentVideoId ?: contentId ?: return null,
+            season = currentSeason,
+            episode = currentEpisode
+        )
+    } else {
+        SourceStreamsRequest(
+            type = contentType ?: "movie",
+            videoId = contentId ?: return null,
+            season = null,
+            episode = null
+        )
+    }
+
 internal fun PlayerRuntimeController.loadSourceStreams(forceRefresh: Boolean) {
     streamRepository.setLocalPluginSearchPaused(false)
-    val type: String
-    val vid: String
-    val seasonArg: Int?
-    val episodeArg: Int?
-
-    if (contentType in listOf("series", "tv") && currentSeason != null && currentEpisode != null) {
-        type = contentType ?: return
-        vid = currentVideoId ?: contentId ?: return
-        seasonArg = currentSeason
-        episodeArg = currentEpisode
-    } else {
-        type = contentType ?: "movie"
-        vid = contentId ?: return
-        seasonArg = null
-        episodeArg = null
-    }
+    val request = currentSourceStreamsRequest() ?: return
+    val type = request.type
+    val vid = request.videoId
+    val seasonArg = request.season
+    val episodeArg = request.episode
 
     val requestKey = buildSourceRequestKey(type = type, videoId = vid, season = seasonArg, episode = episodeArg)
     val state = _uiState.value
@@ -604,6 +617,12 @@ private fun com.nuvio.tv.domain.model.Addon.supportsStreamResourceForChip(type: 
     }
 }
 
+// The launch stream's filename belongs to that stream only, so a newly selected stream without a
+// filename hint falls back to its own url rather than inheriting it.
+internal fun streamFilenameFromUrl(url: String): String? =
+    url.substringBefore('?').substringAfterLast('/', "")
+        .takeIf { it.isNotBlank() && it.contains('.') }
+
 private fun PlayerRuntimeController.applySelectedStreamState(
     stream: Stream,
     url: String,
@@ -612,7 +631,7 @@ private fun PlayerRuntimeController.applySelectedStreamState(
     val playbackRequest = PlayerMediaSourceFactory.normalizePlaybackRequest(url, headers)
     currentStreamUrl = playbackRequest.url
     currentHeaders = playbackRequest.headers
-    currentFilename = stream.behaviorHints?.filename ?: navigationArgs.filename
+    currentFilename = stream.behaviorHints?.filename ?: streamFilenameFromUrl(playbackRequest.url)
     currentStreamResponseHeaders = stream.behaviorHints?.proxyHeaders?.response.orEmpty()
     currentStreamMimeType = PlayerMediaSourceFactory.inferMimeType(
         url = playbackRequest.url,
@@ -648,15 +667,73 @@ private fun PlayerRuntimeController.applyStreamMetadata(stream: Stream) {
     currentVideoWidth = null
     currentVideoHeight = null
     currentVideoBitrate = null
+    persistBingeGroup(stream.behaviorHints?.bingeGroup)
+}
 
-    // Persist binge group per content so subsequent episode plays
-    // (from CW, Details, or next-episode) can reuse the same source group.
-    val bg = stream.behaviorHints?.bingeGroup
+// Persist binge group per content so subsequent episode plays
+// (from CW, Details, or next-episode) can reuse the same source group.
+private fun PlayerRuntimeController.persistBingeGroup(bingeGroup: String?) {
     val cid = contentId
     if (cid != null) {
         scope.launch(kotlinx.coroutines.NonCancellable) {
-            bingeGroupCacheDataStore.replace(cid, bg)
+            bingeGroupCacheDataStore.replace(cid, bingeGroup)
         }
+    }
+}
+
+/**
+ * Moves the stream metadata onto the release an addon redirected playback to.
+ *
+ * Some addons fail over by redirecting the player to the next stream they listed, and the player
+ * follows that silently, so without this the stream info, the filename hints and the saved link
+ * keep describing the stream that never opened. The target is looked up
+ * only among streams already in memory: a search started here would compete with playback.
+ */
+internal fun PlayerRuntimeController.handleStreamRedirect(requestedUrl: String, resolvedUrl: String) {
+    scope.launch {
+        if (requestedUrl != currentStreamUrl) return@launch
+        val addonName = currentAddonName
+        val target = findRedirectTargetStream(_uiState.value.sourceAllStreams, addonName, requestedUrl, resolvedUrl)
+            ?: currentSourceStreamsRequest()?.let { request ->
+                streamRepository.getCachedStreamsFromAllAddons(
+                    type = request.type,
+                    videoId = request.videoId,
+                    season = request.season,
+                    episode = request.episode
+                )?.let { cached ->
+                    findRedirectTargetStream(cached.flatMap { it.streams }, addonName, requestedUrl, resolvedUrl)
+                }
+            }
+        if (target == null) {
+            Log.d(PlayerRuntimeController.TAG, "Stream redirect matched no listed stream")
+            return@launch
+        }
+        // The lookup suspends, so the user may have switched streams meanwhile.
+        if (requestedUrl != currentStreamUrl) return@launch
+        Log.i(
+            PlayerRuntimeController.TAG,
+            "Stream redirected to another listed release, now showing ${target.name ?: target.addonName}"
+        )
+        currentFilename = target.behaviorHints?.filename
+        currentVideoHash = target.behaviorHints?.videoHash
+        currentVideoSize = target.behaviorHints?.videoSize
+        currentStreamBingeGroup = target.behaviorHints?.bingeGroup
+        currentAddonName = target.addonName
+        currentAddonLogo = target.addonLogo
+        currentStreamDescription = target.description
+        persistBingeGroup(currentStreamBingeGroup)
+        _uiState.update {
+            it.copy(
+                currentStreamName = target.name ?: target.addonName,
+                currentStreamAddonName = target.addonName
+            )
+        }
+        // The saved link points at the release that played, so a resume goes straight to it.
+        val targetRequest = PlayerMediaSourceFactory.normalizePlaybackRequest(
+            target.getStreamUrl() ?: resolvedUrl,
+            currentHeaders
+        )
+        persistSelectedStreamForReuse(stream = target, url = targetRequest.url, headers = targetRequest.headers)
     }
 }
 
@@ -1032,7 +1109,7 @@ private fun PlayerRuntimeController.switchToTorrentSourceStream(
         )
     }
     applyStreamMetadata(stream)
-    currentFilename = stream.behaviorHints?.filename ?: navigationArgs.filename
+    currentFilename = stream.behaviorHints?.filename
     showStreamSourceIndicator(stream)
     resetPostPlayOverlayState(clearEpisode = false)
     launchTorrentSourceStream(stream, infoHash, loadSavedProgress = true)
@@ -1462,9 +1539,6 @@ internal fun PlayerRuntimeController.switchToEpisodeStream(
     currentStreamBingeGroup = stream.behaviorHints?.bingeGroup
     currentVideoHash = stream.behaviorHints?.videoHash
     currentVideoSize = stream.behaviorHints?.videoSize
-    currentFilename = stream.behaviorHints?.filename
-        ?: url.substringBefore('?').substringAfterLast('/', "")
-            .takeIf { it.isNotBlank() && it.contains('.') }
     pendingAddonSubtitleLanguage = null
     pendingAddonSubtitleTrackId = null
     pendingAudioSelectionAfterSubtitleRefresh = null
@@ -1593,7 +1667,7 @@ private fun PlayerRuntimeController.switchToEpisodeStreamCommon(
     releasePlayer(flushPlaybackState = false)
 
     applyStreamMetadata(stream)
-    currentFilename = stream.behaviorHints?.filename ?: navigationArgs.filename
+    currentFilename = stream.behaviorHints?.filename
 
     persistedTrackPreference = null
     subtitleDisabledByPersistedPreference = false

@@ -1541,21 +1541,7 @@ internal fun PlayerRuntimeController.initializePlayer(
                             val audioRendererFailed = failingMime == null ||
                                 MimeTypes.isAudio(failingMime)
                             if (audioRendererFailed) {
-                                if (!isSafeAudioModeActiveForCurrentPlayback) {
-                                    safeAudioForcedStreamUrls.add(currentStreamUrl)
-                                    retryCurrentStreamWithSafeAudioFallback(currentPosition)
-                                    return
-                                }
-                                if (!hasTriedAudioPcmFallback) {
-                                    hasTriedAudioPcmFallback = true
-                                    retryCurrentStreamWithSafeAudioFallback(currentPosition)
-                                    return
-                                }
-                                if (!isAudioDisabledForCurrentPlayback) {
-                                    audioDisabledForcedStreamUrls.add(currentStreamUrl)
-                                    retryCurrentStreamWithAudioDisabled(currentPosition)
-                                    return
-                                }
+                                if (tryNextAudioFallbackStep(currentPosition)) return
                             }
                         }
 
@@ -1566,39 +1552,11 @@ internal fun PlayerRuntimeController.initializePlayer(
                         }
 
                         if (error.isAudioTrackFailure()) {
-                            if (!isSafeAudioModeActiveForCurrentPlayback) {
-                                safeAudioForcedStreamUrls.add(currentStreamUrl)
-                                retryCurrentStreamWithSafeAudioFallback(currentPosition)
-                                return
-                            }
-                            if (!hasTriedAudioPcmFallback) {
-                                hasTriedAudioPcmFallback = true
-                                retryCurrentStreamWithSafeAudioFallback(currentPosition)
-                                return
-                            }
-                            if (!isAudioDisabledForCurrentPlayback) {
-                                audioDisabledForcedStreamUrls.add(currentStreamUrl)
-                                retryCurrentStreamWithAudioDisabled(currentPosition)
-                                return
-                            }
+                            if (tryNextAudioFallbackStep(currentPosition)) return
                         }
 
                         if (error.isStuckPlayingNoProgress()) {
-                            if (!isSafeAudioModeActiveForCurrentPlayback) {
-                                safeAudioForcedStreamUrls.add(currentStreamUrl)
-                                retryCurrentStreamWithSafeAudioFallback(currentPosition)
-                                return
-                            }
-                            if (!hasTriedAudioPcmFallback) {
-                                hasTriedAudioPcmFallback = true
-                                retryCurrentStreamWithSafeAudioFallback(currentPosition)
-                                return
-                            }
-                            if (!isAudioDisabledForCurrentPlayback) {
-                                audioDisabledForcedStreamUrls.add(currentStreamUrl)
-                                retryCurrentStreamWithAudioDisabled(currentPosition)
-                                return
-                            }
+                            if (tryNextAudioFallbackStep(currentPosition)) return
                         }
 
                         val timeoutError = error.findCause<SocketTimeoutException>()

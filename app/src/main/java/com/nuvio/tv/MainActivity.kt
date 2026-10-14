@@ -107,6 +107,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import com.nuvio.tv.ui.screens.ambient.AmbientIdleController
 import com.nuvio.tv.ui.screens.ambient.AmbientModeHost
+import com.nuvio.tv.ui.screens.ambient.LocalAmbientIdleController
 import com.nuvio.tv.ui.components.LocalStartupLoadingState
 import com.nuvio.tv.ui.components.LocalStartupSplashEnabled
 import com.nuvio.tv.ui.components.StartupLoadingState
@@ -703,6 +704,7 @@ open class MainActivity : ComponentActivity() {
                     LocalLandscapePosterMode provides mainUiPrefs.landscapePosterMode,
                     LocalAlwaysBackdropWithLogo provides mainUiPrefs.alwaysBackdropWithLogo,
                     LocalMemberAccess provides mainUiPrefs.memberAccess,
+                    LocalAmbientIdleController provides ambientIdleController,
                     com.nuvio.tv.core.player.LocalTrailerPlayerPool provides trailerPlayerPool,
                     LocalSplashBackground provides splashBackground,
                     LocalStartupLoadingState provides startupLoadingState,

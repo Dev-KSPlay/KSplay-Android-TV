@@ -192,7 +192,9 @@ class PlayerRuntimeController(
     internal val rememberedAudioLanguage: String? = navigationArgs.rememberedAudioLanguage
     internal val rememberedAudioName: String? = navigationArgs.rememberedAudioName
     internal val cloudSessionToken: String? = navigationArgs.cloudSessionToken
-    internal val mediaSourceFactory = PlayerMediaSourceFactory(context.applicationContext)
+    internal val mediaSourceFactory = PlayerMediaSourceFactory(context.applicationContext).apply {
+        onStreamRedirected = { requestedUrl, resolvedUrl -> handleStreamRedirect(requestedUrl, resolvedUrl) }
+    }
 
     // The file rate is the only one every container reports, so the playhead is placed in the
     // file by how far through it is rather than by any declared bitrate.
@@ -216,8 +218,7 @@ class PlayerRuntimeController(
     internal var currentVideoHash: String? = navigationArgs.videoHash
     internal var currentVideoSize: Long? = navigationArgs.videoSize
     internal var currentFilename: String? = navigationArgs.filename
-        ?: initialStreamUrl.substringBefore('?').substringAfterLast('/', "")
-            .takeIf { it.isNotBlank() && it.contains('.') }
+        ?: streamFilenameFromUrl(initialStreamUrl)
     internal var currentAddonName: String? = navigationArgs.addonName
     internal var currentAddonLogo: String? = navigationArgs.addonLogo
     internal var currentStreamDescription: String? = navigationArgs.streamDescription
@@ -737,6 +738,7 @@ class PlayerRuntimeController(
             fetchMetaDetails(contentId, contentType)
         }
         observeBlurUnwatchedEpisodes()
+        observeEpisodeOptionsOverlayStyle()
         observeEpisodeWatchProgress()
         observeTorrentSettings()
         observeStreamBadgeSettings()
