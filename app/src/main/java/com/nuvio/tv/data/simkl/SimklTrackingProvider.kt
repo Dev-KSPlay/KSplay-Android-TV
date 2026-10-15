@@ -171,12 +171,9 @@ class SimklTrackingScrobbler @Inject constructor(
     }
 
     /*
-     * Difference from mobile: mobile reads `simklRewatchMode` and `simklWatchedThresholdPercent` from
-     * `TrackingSettingsRepository`. TV has no such `object` repository, so both values are read from
-     * `TraktSettingsDataStore`, where the keys live. `scrobble` is `suspend`, so the read is a single
-     * `first()` at the start of the path, the same as `minimumRewatchRunEpisodes` in
-     * `SimklSyncRepository.kt` and `SimklSyncEngine.kt`. A change on the settings screen therefore
-     * changes the behaviour at the next scrobble.
+     * The rewatch mode and the completion threshold are read from `TraktSettingsDataStore`, a single
+     * `first()` at the start of the path, so a change on the settings screen takes effect at the next
+     * scrobble.
      */
     private suspend fun rewatchMode(): SimklRewatchMode =
         settingsDataStore.simklRewatchMode.first()

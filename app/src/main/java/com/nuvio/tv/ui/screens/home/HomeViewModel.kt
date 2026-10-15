@@ -94,7 +94,8 @@ class HomeViewModel @Inject constructor(
         tmdbService,
         tmdbMetadataService,
         mdbListRepository
-    )) : ViewModel() {
+    )
+) : ViewModel() {
     companion object {
         internal const val TAG = "HomeViewModel"
         internal const val STARTUP_GRACE_PERIOD_MS = 1_500L

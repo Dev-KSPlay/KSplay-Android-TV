@@ -18,10 +18,7 @@ import com.nuvio.tv.core.tracking.TrackingMediaReference
  * the most recently rewatched episode is the run. A run the user is in is always offered; the mode
  * decides whether the account is asked about rewatches at all (see [SimklRewatchMode]).
  *
- * Difference from mobile: mobile takes `animeIdPreference` and groups through
- * `canonicalContentId(preference)`. The TV `SimklMedia.canonicalContentId()` takes no parameter and
- * keeps the anime preference in `SimklAnimeIdPreferenceHolder`, so grouping on `contentId` goes
- * through it and the preference shows up only in the rest of the pipeline.
+ * TV groups on `contentId`, which reads the anime preference from `SimklAnimeIdPreferenceHolder`.
  */
 internal fun deriveSimklRewatchRuns(
     entries: List<SimklLibraryEntry>,

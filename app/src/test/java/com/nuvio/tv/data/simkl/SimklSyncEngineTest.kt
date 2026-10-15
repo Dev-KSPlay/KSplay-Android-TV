@@ -654,7 +654,7 @@ class SimklSyncEngineTest {
     }
 
     @Test
-    fun `a stored snapshot keeps its rewatch fields and schema version`() {
+    fun `a stored snapshot keeps its rewatch fields`() {
         val storageJson = Json { ignoreUnknownKeys = true; encodeDefaults = true; explicitNulls = false }
         val snapshot = SimklSyncSnapshot(
             isInitialized = true,
@@ -676,7 +676,6 @@ class SimklSyncEngineTest {
             storageJson.encodeToString(snapshot)
         )
 
-        assertEquals(2, restored.schemaVersion)
         assertEquals(snapshot.rewatchRuns, restored.rewatchRuns)
         assertEquals(snapshot.rewatchSessions, restored.rewatchSessions)
         assertEquals(snapshot.entries, restored.entries)
@@ -697,9 +696,8 @@ class SimklSyncEngineTest {
 
         val restored = json.decodeFromString<SimklSyncSnapshot>(payload)
 
-        // The payload keeps the version it was stored with, so a snapshot from an older app stays
-        // recognizable in the file; the fields this update added come back as their defaults.
-        assertEquals(1, restored.schemaVersion)
+        // An older app stored a `schemaVersion` this app no longer carries; it is ignored on decode
+        // and the fields this update added come back as their defaults.
         assertEquals("v1", restored.watermark)
         assertTrue(restored.rewatchRuns.isEmpty())
         assertTrue(restored.rewatchSessions.isEmpty())
