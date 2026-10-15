@@ -98,11 +98,11 @@ class SimklSyncEngine internal constructor(
             )
         }
         return runCatching {
-            val sessions = remote.fetchRewatchSessions()
+            val sessions = remote.fetchRewatchSessions().runningRewatchSessions()
             SimklRewatchRead(
                 runs = deriveSimklRewatchRuns(
                     entries = sessions,
-                    offerRuns = offersSimklRewatchRuns()
+                    offerRuns = true
                 ),
                 sessions = sessions
             )

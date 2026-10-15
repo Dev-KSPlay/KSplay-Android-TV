@@ -171,13 +171,15 @@ class SimklSyncRepository @Inject constructor(
     /**
      * Stores the runs the account's rewatch sessions make, so a rewatch the user just confirmed shows
      * up in Continue Watching at once instead of after the next sync. The sessions come from the
-     * caller, which read them to answer whether the write landed.
+     * caller, which read them to answer whether the write landed; only the running rewatch sessions
+     * are kept, never the canonical rows read beside them.
      */
     internal suspend fun adoptRewatchSessions(sessions: List<SimklLibraryEntry>) =
         withContext(Dispatchers.IO) {
+            val runningSessions = sessions.runningRewatchSessions()
             val runs = runCatching {
                 deriveSimklRewatchRuns(
-                    entries = sessions,
+                    entries = runningSessions,
                     offerRuns = offersSimklRewatchRuns()
                 )
             }.getOrElse { error ->
@@ -192,11 +194,14 @@ class SimklSyncRepository @Inject constructor(
                 val current = _state.value
                 if (
                     current.snapshot.rewatchRuns == runs &&
-                    current.snapshot.rewatchSessions == sessions
+                    current.snapshot.rewatchSessions == runningSessions
                 ) {
                     return@withLock
                 }
-                val snapshot = current.snapshot.copy(rewatchRuns = runs, rewatchSessions = sessions)
+                val snapshot = current.snapshot.copy(
+                    rewatchRuns = runs,
+                    rewatchSessions = runningSessions
+                )
                 val projection = buildProjection(snapshot)
                 storage.save(profileId, encodeSnapshot(snapshot))
                 if (isCurrent(profileId, generation)) {

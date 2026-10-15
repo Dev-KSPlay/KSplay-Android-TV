@@ -132,6 +132,17 @@ private fun consecutiveChains(episodes: List<RewatchedEpisode>): List<List<Rewat
         }
 
 /**
+ * The rows of a read that are rewatch sessions, kept for the snapshot and the derivation.
+ *
+ * A session the account still reports as running is the run the user is in; a closed or finished one
+ * is a run they left, and a canonical row is not a session at all. Storing only this subset keeps the
+ * whole show library out of the snapshot while every reader keeps working, since each one already
+ * filters to exactly these rows.
+ */
+internal fun List<SimklLibraryEntry>.runningRewatchSessions(): List<SimklLibraryEntry> =
+    filter { entry -> entry.isRewatch && entry.isRunningRewatchSession() }
+
+/**
  * The episodes the running session of the item holds: what a rewatch in progress has covered so far.
  *
  * The detail screen draws the same marker on every episode the account watched, so a run needs its
