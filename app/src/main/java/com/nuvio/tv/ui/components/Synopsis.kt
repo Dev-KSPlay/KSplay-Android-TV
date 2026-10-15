@@ -124,7 +124,7 @@ fun SynopsisDescription(
                         indication = null,
                         onClick = onShowFullDescription
                     )
-                    .semantics { role = Role.Button }
+                    .semantics { role = Role.Button; contentDescription = stringResource(R.string.hero_synopsis_read_more) }
                     .padding(horizontal = highlightInset, vertical = 8.dp)
             } else {
                 Modifier
@@ -293,6 +293,7 @@ fun SynopsisOverlay(
                         }
                         .focusRequester(contentFocusRequester)
                         .focusable()
+                        .semantics { contentDescription = title }
                         .verticalScroll(scrollState)
                 ) {
                     Text(
