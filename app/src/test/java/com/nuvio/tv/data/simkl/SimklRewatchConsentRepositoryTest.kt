@@ -86,6 +86,31 @@ class SimklRewatchConsentRepositoryTest {
     }
 
     @Test
+    fun `a yes for one series is not forgotten when another series is granted`() {
+        repository.ask(dark(7))
+        repository.grant()
+        repository.ask(breakingBad(1))
+        repository.grant()
+
+        // Both answers stand: a yes for one series must not erase the yes for the other.
+        assertTrue(repository.grantedFor(dark(8)))
+        assertTrue(repository.grantedFor(breakingBad(2)))
+    }
+
+    @Test
+    fun `a no for one series is not forgotten when another series is declined`() {
+        repository.ask(dark(7))
+        repository.decline()
+        repository.ask(breakingBad(1))
+        repository.decline()
+
+        repository.ask(dark(8))
+        assertNull(repository.question.value)
+        repository.ask(breakingBad(2))
+        assertNull(repository.question.value)
+    }
+
+    @Test
     fun `the question that is already open is not replaced`() {
         repository.ask(dark(7))
         repository.ask(dark(8))

@@ -29,15 +29,22 @@ data class RewatchQuestion(val media: TrackingMediaReference)
 @Singleton
 class SimklRewatchConsentRepository @Inject constructor() {
     /**
+     * The answers are written from the UI and read from the scrobbler on IO, so every access goes
+     * through this lock and the series keys are kept as sets: a decision about one series must not
+     * forget the previous one.
+     */
+    private val lock = Any()
+
+    /**
      * The series the user said yes to, until the account holds a session for it.
      *
      * The yes opens the run the user was asked about, not every run of the series: once a session
      * is seen the answer is released, and a later run asks again.
      */
-    private var grantedSeriesKey: String? = null
+    private val grantedSeriesKeys = mutableSetOf<String>()
 
     /** The series the user said no to, for the rest of the app run. */
-    private var declinedSeriesKey: String? = null
+    private val declinedSeriesKeys = mutableSetOf<String>()
 
     /** The series the user dismissed the question for, until the playback that raised it ends. */
     private val dismissedSeriesKeys = mutableSetOf<String>()
@@ -52,8 +59,10 @@ class SimklRewatchConsentRepository @Inject constructor() {
      */
     fun ask(media: TrackingMediaReference) {
         val seriesKey = media.seriesKey()
-        if (grantedSeriesKey == seriesKey || declinedSeriesKey == seriesKey) return
-        if (seriesKey in dismissedSeriesKeys) return
+        val answered = synchronized(lock) {
+            seriesKey in grantedSeriesKeys || seriesKey in declinedSeriesKeys || seriesKey in dismissedSeriesKeys
+        }
+        if (answered) return
         if (_question.value?.media?.seriesKey() == seriesKey) return
         _question.value = RewatchQuestion(media)
     }
@@ -62,14 +71,14 @@ class SimklRewatchConsentRepository @Inject constructor() {
     fun grant() {
         val question = _question.value ?: return
         _question.value = null
-        grantedSeriesKey = question.media.seriesKey()
+        synchronized(lock) { grantedSeriesKeys += question.media.seriesKey() }
     }
 
     /** The user said no: the series stays out of the account for the rest of this app run. */
     fun decline() {
         val question = _question.value ?: return
         _question.value = null
-        declinedSeriesKey = question.media.seriesKey()
+        synchronized(lock) { declinedSeriesKeys += question.media.seriesKey() }
     }
 
     /**
@@ -79,23 +88,28 @@ class SimklRewatchConsentRepository @Inject constructor() {
     fun dismiss() {
         val question = _question.value ?: return
         _question.value = null
-        dismissedSeriesKeys += question.media.seriesKey()
+        synchronized(lock) { dismissedSeriesKeys += question.media.seriesKey() }
     }
 
     /** The playback that raised the dismissed question has ended, so the series may ask again. */
     fun clearDismissal(media: TrackingMediaReference) {
-        dismissedSeriesKeys -= media.seriesKey()
+        val seriesKey = media.seriesKey()
+        synchronized(lock) { dismissedSeriesKeys -= seriesKey }
     }
 
     /** True when a yes of this app run covers the media's series and no session has replaced it. */
-    fun grantedFor(media: TrackingMediaReference): Boolean = grantedSeriesKey == media.seriesKey()
+    fun grantedFor(media: TrackingMediaReference): Boolean {
+        val seriesKey = media.seriesKey()
+        return synchronized(lock) { seriesKey in grantedSeriesKeys }
+    }
 
     /**
      * The account runs this series now, so the answer has done its job and is released: the next
      * run of the series asks again.
      */
     fun releaseGrant(media: TrackingMediaReference) {
-        if (grantedSeriesKey == media.seriesKey()) grantedSeriesKey = null
+        val seriesKey = media.seriesKey()
+        synchronized(lock) { grantedSeriesKeys -= seriesKey }
     }
 
     /**

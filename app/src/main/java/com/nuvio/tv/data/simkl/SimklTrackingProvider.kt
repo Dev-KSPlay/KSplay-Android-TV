@@ -153,6 +153,10 @@ class SimklTrackingScrobbler @Inject constructor(
             // series may be asked about again the next time it plays.
             rewatchConsentRepository.clearDismissal(enrichedEvent.media)
             if (result.rewatchId != null) {
+                // A rewatch was actually recorded, so the yes before the playback has done its job.
+                // This is the release a running session already made for a show, and the only one a
+                // movie gets, since movie sessions are never read.
+                rewatchConsentRepository.releaseGrant(enrichedEvent.media)
                 // A session the account just took is not on the snapshot until the sessions are read
                 // again, and Continue Watching follows that read: asking for a refresh keeps the row
                 // current instead of waiting for the next sync.
