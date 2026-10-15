@@ -516,14 +516,12 @@ class HomeViewModel @Inject constructor(
             simklSyncRepository.state
                 .map { state -> state.snapshot.rewatchRuns }
                 .distinctUntilChanged()
-                .collect { runs ->
-                    // A run the account is in belongs in the row on every device, so a dismissal the
-                    // row saved earlier must not keep hiding it here: a build that could not close
-                    // the session stored one and the run stayed, leaving the row and the account
-                    // disagreeing about the same run. The keys are the id forms the card can carry.
-                    runs.flatMap { run -> run.matchKeys }
-                        .distinct()
-                        .forEach { key -> traktSettingsDataStore.removeDismissedNextUpKeysForContent(key) }
+                .collect { _ ->
+                    // Dismissals are not healed here any more: clearing every run's keys on every
+                    // emission (the first included) made a dismissal unable to keep a run card
+                    // hidden. The close path clears the keys of the one run it actually closes; the
+                    // cost is that a stale dismissal from a build that could not close a session is
+                    // no longer swept away.
                     if (initial) {
                         initial = false
                         return@collect
