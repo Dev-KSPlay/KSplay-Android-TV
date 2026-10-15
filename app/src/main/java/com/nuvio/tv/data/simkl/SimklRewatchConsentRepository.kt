@@ -39,6 +39,9 @@ class SimklRewatchConsentRepository @Inject constructor() {
     /** The series the user said no to, for the rest of the app run. */
     private var declinedSeriesKey: String? = null
 
+    /** The series the user dismissed the question for, until the playback that raised it ends. */
+    private val dismissedSeriesKeys = mutableSetOf<String>()
+
     private val _question = MutableStateFlow<RewatchQuestion?>(null)
     val question: StateFlow<RewatchQuestion?> = _question.asStateFlow()
 
@@ -50,6 +53,7 @@ class SimklRewatchConsentRepository @Inject constructor() {
     fun ask(media: TrackingMediaReference) {
         val seriesKey = media.seriesKey()
         if (grantedSeriesKey == seriesKey || declinedSeriesKey == seriesKey) return
+        if (seriesKey in dismissedSeriesKeys) return
         if (_question.value?.media?.seriesKey() == seriesKey) return
         _question.value = RewatchQuestion(media)
     }
@@ -68,9 +72,19 @@ class SimklRewatchConsentRepository @Inject constructor() {
         declinedSeriesKey = question.media.seriesKey()
     }
 
-    /** Drops a question that was never answered, so the next playback can ask again. */
+    /**
+     * Drops a question that was never answered. The dismissal is remembered for the playback that
+     * raised it, so a pause and its resume do not ask again; it is cleared when that playback stops.
+     */
     fun dismiss() {
+        val question = _question.value ?: return
         _question.value = null
+        dismissedSeriesKeys += question.media.seriesKey()
+    }
+
+    /** The playback that raised the dismissed question has ended, so the series may ask again. */
+    fun clearDismissal(media: TrackingMediaReference) {
+        dismissedSeriesKeys -= media.seriesKey()
     }
 
     /** True when a yes of this app run covers the media's series and no session has replaced it. */

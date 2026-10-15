@@ -28,7 +28,7 @@ class SimklRewatchConsentRepositoryTest {
     }
 
     @Test
-    fun `an unanswered question decides nothing and is asked again`() {
+    fun `a dismissed question is not asked again until the playback ends`() {
         repository.ask(dark(7))
         assertEquals(7, repository.question.value?.media?.episode?.number)
 
@@ -36,6 +36,13 @@ class SimklRewatchConsentRepositoryTest {
 
         assertNull(repository.question.value)
         assertFalse(repository.grantedFor(dark(7)))
+        // A pause resets the scrobble flags and resuming sends a new START: the dismissal keeps the
+        // question quiet for the rest of this playback.
+        repository.ask(dark(7))
+        assertNull(repository.question.value)
+
+        // The playback of that item ended, so a later playback may ask again.
+        repository.clearDismissal(dark(7))
         repository.ask(dark(7))
         assertEquals(7, repository.question.value?.media?.episode?.number)
     }

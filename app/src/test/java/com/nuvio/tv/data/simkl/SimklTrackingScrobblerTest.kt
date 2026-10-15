@@ -140,6 +140,17 @@ class SimklTrackingScrobblerTest {
     }
 
     @Test
+    fun `a stop clears the dismissal so a later playback asks again`() = runBlocking {
+        connect()
+        accountAnswers(scrobbleResult(outcome = SimklScrobbleOutcome.PAUSE, progress = 45.0))
+
+        scrobbler.scrobble(TrackingScrobbleAction.STOP, event(progressPercent = 45.0))
+
+        // The dismissal is scoped to one playback, so the STOP that ends it drops the marker.
+        verify(exactly = 1) { consentRepository.clearDismissal(any()) }
+    }
+
+    @Test
     fun `a disconnected account is told nothing`() = runBlocking {
         every { authRepository.state } returns MutableStateFlow(SimklAuthState(isAuthenticated = false))
 

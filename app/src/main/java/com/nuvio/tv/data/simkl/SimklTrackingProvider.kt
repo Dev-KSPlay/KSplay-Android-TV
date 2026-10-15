@@ -148,11 +148,16 @@ class SimklTrackingScrobbler @Inject constructor(
                 rewatchConsentRepository.ask(enrichedEvent.media)
             }
         }
-        // A session the account just took is not on the snapshot until the sessions are read again,
-        // and Continue Watching follows that read: asking for a refresh keeps the row current
-        // instead of waiting for the next sync.
-        if (action == TrackingScrobbleAction.STOP && result.rewatchId != null) {
-            syncRepository.refreshAsync(TrackingRefreshIntent.INVALIDATED)
+        if (action == TrackingScrobbleAction.STOP) {
+            // A dismissal is for the playback it happened during: the playback has ended, so the
+            // series may be asked about again the next time it plays.
+            rewatchConsentRepository.clearDismissal(enrichedEvent.media)
+            if (result.rewatchId != null) {
+                // A session the account just took is not on the snapshot until the sessions are read
+                // again, and Continue Watching follows that read: asking for a refresh keeps the row
+                // current instead of waiting for the next sync.
+                syncRepository.refreshAsync(TrackingRefreshIntent.INVALIDATED)
+            }
         }
         Log.d(
             TRACKING_SCROBBLE_DIAGNOSTIC_TAG,
