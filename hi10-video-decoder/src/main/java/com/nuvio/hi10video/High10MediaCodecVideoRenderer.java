@@ -15,7 +15,7 @@ import java.util.List;
 
 /** Keeps Media3's normal video path, but never initializes an incompatible High10 codec. */
 @UnstableApi
-public final class High10MediaCodecVideoRenderer extends MediaCodecVideoRenderer {
+public class High10MediaCodecVideoRenderer extends MediaCodecVideoRenderer {
   public High10MediaCodecVideoRenderer(Builder builder) {
     super(builder);
   }
