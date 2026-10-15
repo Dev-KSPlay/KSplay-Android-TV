@@ -14,8 +14,9 @@ import org.junit.Test
  * The answers the question before a playback can give, and how far each one reaches.
  *
  * The answers are kept for the app run only: a yes covers a series until the account runs a session
- * for it, a no keeps the series quiet, and a question left unanswered decides nothing and is asked
- * again. Nothing here waits for a write, because a question is not one.
+ * for it, a no keeps the series quiet, and a question left unanswered decides nothing — it is
+ * dismissed only for the playback that raised it and is asked again once that playback ends.
+ * Nothing here waits for a write, because a question is not one.
  */
 class SimklRewatchConsentRepositoryTest {
 
