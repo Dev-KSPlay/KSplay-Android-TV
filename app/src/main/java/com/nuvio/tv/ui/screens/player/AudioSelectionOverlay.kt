@@ -52,6 +52,7 @@ import androidx.tv.material3.Text
 import com.nuvio.tv.R
 import com.nuvio.tv.ui.screens.detail.requestFocusAfterFrames
 import com.nuvio.tv.ui.util.keepLtr
+import com.nuvio.tv.ui.util.ltrNumbers
 import com.nuvio.tv.ui.util.languageCodeToName
 import java.util.Locale
 import kotlinx.coroutines.delay
@@ -458,12 +459,12 @@ private fun AudioControlsContent(
             R.string.audio_mix_range_saved,
             AUDIO_AMPLIFICATION_MIN_DB,
             AUDIO_AMPLIFICATION_MAX_DB
-        )
+        ).ltrNumbers()
         else -> stringResource(
             R.string.audio_mix_range,
             AUDIO_AMPLIFICATION_MIN_DB,
             AUDIO_AMPLIFICATION_MAX_DB
-        )
+        ).ltrNumbers()
     }
 
     Column(
@@ -479,7 +480,7 @@ private fun AudioControlsContent(
                 R.string.audio_delay_range,
                 AUDIO_DELAY_MIN_MS / 1000f,
                 AUDIO_DELAY_MAX_MS / 1000f
-            ),
+            ).ltrNumbers(),
             canDecrease = canDecreaseDelay,
             canIncrease = canIncreaseDelay,
             minusFocusRequester = delayMinusFocusRequester,
