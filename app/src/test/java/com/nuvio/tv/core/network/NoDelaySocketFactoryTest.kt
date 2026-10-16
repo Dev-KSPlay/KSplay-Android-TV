@@ -64,9 +64,8 @@ class NoDelaySocketFactoryTest {
 
     @Test
     fun `playback clients and their copies use it`() {
-        assertSame(PlaybackSocketFactory, PlayerPlaybackNetworking.playbackHttpClient.socketFactory)
-        assertSame(PlaybackSocketFactory, PlayerPlaybackNetworking.trustAllPlaybackHttpClient.socketFactory)
-        assertSame(PlaybackSocketFactory, PlayerPlaybackNetworking.createHttpClient(mapOf("Authorization" to "x")).socketFactory)
-        PlaybackSocketFactory.createSocket().use { assertTrue(it.tcpNoDelay) }
+        assertSame(NoDelaySocketFactory, PlayerPlaybackNetworking.playbackHttpClient.socketFactory)
+        assertSame(NoDelaySocketFactory, PlayerPlaybackNetworking.trustAllPlaybackHttpClient.socketFactory)
+        assertSame(NoDelaySocketFactory, PlayerPlaybackNetworking.createHttpClient(mapOf("Authorization" to "x")).socketFactory)
     }
 }
