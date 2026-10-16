@@ -2951,7 +2951,7 @@
     <string name="stream_test_no_stream">لا يوجد تشغيل مسجل. شغّل فيديو لتشغيل الاختبارات التشخيصية على مضيفه.</string>
     <string name="stream_test_section_header">تشخيصات معدل نقل البث</string>
     <string name="stream_test_server_label">الخادم: %1$s</string>
-    <string name="stream_test_video_bitrate">متوسط معدل بت الفيديو: %1$s</string>
+    <string name="stream_test_video_bitrate">متوسط معدل بت الفيديو: ‎%1$s</string>
     <string name="sub_strip_sdh">إزالة ترجمات SDH</string>
     <string name="sub_strip_sdh_desc">إخفاء أوصاف الأصوات وأسماء المتحدثين من الترجمات النصية</string>
     <string name="subtitle_delay_reset">تصفير</string>
