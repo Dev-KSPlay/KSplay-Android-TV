@@ -149,3 +149,14 @@
 
 -dontwarn java.beans.ConstructorProperties
 -dontwarn java.beans.Transient
+
+# ── Logging ────────────────────────────────────────────────────────────────────
+# Remove Log.v / Log.d calls from minified builds (release and benchmark).
+# Needs R8 optimization, which proguard-android-optimize.txt already enables.
+# Log.i / Log.w / Log.e are kept on purpose so logcat from bug reports stays useful.
+# Only calls compiled into the app are affected; DexClassLoader extensions are not.
+# Note: arguments with side effects are still evaluated, only the call is removed.
+-assumenosideeffects class android.util.Log {
+    public static int v(...);
+    public static int d(...);
+}
