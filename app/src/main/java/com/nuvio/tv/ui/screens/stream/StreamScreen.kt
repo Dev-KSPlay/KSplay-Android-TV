@@ -130,6 +130,18 @@ fun StreamScreen(
     onAutoPlayResolved: (StreamPlaybackInfo) -> Unit
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val watchProgress by viewModel.watchProgress.collectAsStateWithLifecycle()
+    val resumeProgress = streamResumeProgress(watchProgress, startFromBeginning)
+    val resumePositionMs = resumeProgress?.position?.takeIf { it > 0L }
+    val resumePercent = resumeProgress?.progressPercentage?.takeIf { it > 0f }
+    val resumeText = when {
+        resumePositionMs != null -> stringResource(
+            R.string.stream_resume_from_time,
+            com.nuvio.tv.ui.screens.detail.formatPlaybackTime(resumePositionMs)
+        )
+        resumePercent != null -> stringResource(R.string.stream_resume_from_percent, (resumePercent * 100).toInt())
+        else -> null
+    }
     val sharedStream by viewModel.sharedStream.collectAsStateWithLifecycle()
     val partySource by viewModel.partySource.collectAsStateWithLifecycle()
     val playerPreference by viewModel.playerPreference.collectAsStateWithLifecycle(
@@ -444,6 +456,7 @@ fun StreamScreen(
                 // Right side - Streams container
                 RightStreamSection(
                     isLoading = uiState.isLoading,
+                    resumeText = resumeText,
                     error = uiState.error,
                     streams = uiState.filteredStreams,
                     availableAddons = uiState.availableAddons,
@@ -740,6 +753,7 @@ private fun LeftContentSection(
 @Composable
 private fun RightStreamSection(
     isLoading: Boolean,
+    resumeText: String?,
     error: String?,
     streams: List<Stream>,
     availableAddons: List<String>,
@@ -852,6 +866,14 @@ private fun RightStreamSection(
         modifier = modifier
             .padding(top = NuvioTheme.spacing.xxxl, end = NuvioTheme.spacing.xxxl, bottom = NuvioTheme.spacing.xxxl)
     ) {
+        resumeText?.let { text ->
+            Text(
+                text = text,
+                style = MaterialTheme.typography.labelLarge,
+                color = NuvioTheme.colors.TextSecondary,
+                modifier = Modifier.padding(bottom = NuvioTheme.spacing.sm)
+            )
+        }
         val chipRowHeight = NuvioTheme.spacing.huge
 
         // Addon filter chips
@@ -1425,6 +1447,16 @@ private fun StreamCard(
                             )
                         }
                     }
+                }
+
+                stream.pluginSourceName?.takeIf { it.isNotBlank() && it != stream.addonName }?.let { sourceName ->
+                    Text(
+                        text = sourceName,
+                        style = MaterialTheme.typography.labelSmall.copy(
+                            textDirection = sourceName.contentTextDirection()
+                        ),
+                        color = NuvioTheme.extendedColors.textSecondary
+                    )
                 }
 
                 streamDescription?.let { description ->
