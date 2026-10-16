@@ -89,12 +89,3 @@ fun TextDirection.toAbsoluteAlignment(): Alignment.Horizontal =
  * RTL layout, by wrapping it in LRM marks. Strings whose own content is RTL are returned unchanged.
  */
 fun String.keepLtr(): String = if (isContentRtl()) this else "\u200E$this\u200E"
-
-private val NUMBER_REGEX = Regex("[-+\\u2212]?\\p{Nd}+(?:[.,\\u066B]\\p{Nd}+)?")
-
-/**
- * Prefixes every number in the string (including its sign and unit that follows it) with an LRM, so
- * that in RTL text a value such as "-60.00" or "10 dB" keeps its sign position and its
- * "number unit" order instead of being reordered by the bidi algorithm.
- */
-fun String.ltrNumbers(): String = NUMBER_REGEX.replace(this) { "\u200E${it.value}" }
