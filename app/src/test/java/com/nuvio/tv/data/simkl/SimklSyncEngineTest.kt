@@ -686,16 +686,19 @@ class SimklSyncEngineTest {
         remote.fetchRewatchSessions()
         remote.fetchAllItems(SimklAllItemsRequest.Bootstrap(SimklMediaType.SHOWS))
 
-        assertEquals(2, urls.size)
-        assertTrue("/sync/all-items/shows" in urls[0])
-        assertTrue("allow_rewatch=yes" in urls[0])
-        assertTrue("extended=full" in urls[0])
-        assertTrue("episode_watched_at=yes" in urls[0])
-        assertTrue("language=en" in urls[0])
+        // A session can belong to any of the three types, and each of those reads carries the flag.
+        assertEquals(4, urls.size)
+        listOf("shows", "movies", "anime").forEachIndexed { index, type ->
+            assertTrue("/sync/all-items/$type" in urls[index])
+            assertTrue("allow_rewatch=yes" in urls[index])
+            assertTrue("extended=full" in urls[index])
+            assertTrue("episode_watched_at=yes" in urls[index])
+            assertTrue("language=en" in urls[index])
+        }
         // The canonical read must never ask for rewatches: a sidecar row carries the same show, so it
         // would be merged over the real watch position.
-        assertFalse("allow_rewatch" in urls[1])
-        assertTrue("extended=full_anime_seasons" in urls[1])
+        assertFalse("allow_rewatch" in urls[3])
+        assertTrue("extended=full_anime_seasons" in urls[3])
     }
 
     @Test
