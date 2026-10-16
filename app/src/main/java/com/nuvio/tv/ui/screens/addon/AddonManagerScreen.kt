@@ -104,7 +104,6 @@ import androidx.tv.material3.Switch
 import androidx.tv.material3.SwitchDefaults
 import androidx.tv.material3.Text
 import com.nuvio.tv.domain.model.Addon
-import com.nuvio.tv.domain.model.CatalogDescriptor
 import com.nuvio.tv.domain.model.ExperienceMode
 import com.nuvio.tv.ui.components.LoadingIndicator
 import com.nuvio.tv.ui.components.NuvioDialog
@@ -1494,8 +1493,4 @@ private fun AddonCardContent(
             color = NuvioTheme.colors.TextTertiary
         )
     }
-}
-
-private fun CatalogDescriptor.isSearchOnlyCatalog(): Boolean {
-    return extra.any { extra -> extra.name.equals("search", ignoreCase = true) && extra.isRequired }
 }
