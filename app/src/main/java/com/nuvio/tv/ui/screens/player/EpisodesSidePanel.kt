@@ -719,11 +719,11 @@ private fun EpisodesSeasonTabs(
                     .onFocusChanged {
                         isFocused = it.isFocused
                         if (it.isFocused && season != selectedSeason) pendingSeason = season
-                    },
+                    }
                     .semantics {
                         role = Role.Tab
                         this.selected = isSelected
-                    }
+                    },
                 shape = CardDefaults.shape(shape = RoundedCornerShape(NuvioTheme.spacing.xl)),
                 colors = CardDefaults.colors(
                     containerColor = if (isSelected) Color(0xFFF5F5F5) else NuvioTheme.colors.BackgroundCard,
