@@ -51,8 +51,6 @@ import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import com.nuvio.tv.R
 import com.nuvio.tv.ui.screens.detail.requestFocusAfterFrames
-import com.nuvio.tv.ui.util.keepLtr
-import com.nuvio.tv.ui.util.ltrNumbers
 import com.nuvio.tv.ui.util.languageCodeToName
 import java.util.Locale
 import kotlinx.coroutines.delay
@@ -459,12 +457,12 @@ private fun AudioControlsContent(
             R.string.audio_mix_range_saved,
             AUDIO_AMPLIFICATION_MIN_DB,
             AUDIO_AMPLIFICATION_MAX_DB
-        ).ltrNumbers()
+        )
         else -> stringResource(
             R.string.audio_mix_range,
             AUDIO_AMPLIFICATION_MIN_DB,
             AUDIO_AMPLIFICATION_MAX_DB
-        ).ltrNumbers()
+        )
     }
 
     Column(
@@ -480,7 +478,7 @@ private fun AudioControlsContent(
                 R.string.audio_delay_range,
                 AUDIO_DELAY_MIN_MS / 1000f,
                 AUDIO_DELAY_MAX_MS / 1000f
-            ).ltrNumbers(),
+            ),
             canDecrease = canDecreaseDelay,
             canIncrease = canIncreaseDelay,
             minusFocusRequester = delayMinusFocusRequester,
@@ -659,7 +657,7 @@ private fun AdjustmentSection(
         )
 
         Text(
-            text = valueText.keepLtr(),
+            text = valueText,
             style = MaterialTheme.typography.titleMedium,
             color = Color.White
         )
@@ -801,8 +799,8 @@ private enum class AudioControlFocusTarget {
 
 private fun formatAudioDelay(delayMs: Int): String {
     return if (delayMs == 0) {
-        String.format(Locale.US, "%.3fs", 0f)
+        String.format(Locale.US, "\u200E%.3fs", 0f)
     } else {
-        String.format(Locale.US, "%+.3fs", delayMs / 1000f)
+        String.format(Locale.US, "\u200E%+.3fs", delayMs / 1000f)
     }
 }
