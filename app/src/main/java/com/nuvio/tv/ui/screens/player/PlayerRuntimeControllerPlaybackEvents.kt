@@ -268,7 +268,7 @@ internal fun PlayerRuntimeController.startProgressUpdates() {
                             playbackEnded = naturalEnded
                         )
                     }
-                    updateMpvAvailableTracks()
+                    updateMpvTracksOnTick()
                     updateActiveSkipInterval(pos)
                     if (!_playbackTimeline.value.isLive) {
                         evaluatePostPlayOverlayVisibility(
@@ -569,7 +569,7 @@ private fun PlayerRuntimeController.buildPlaybackIssuePlaybackSettingsInput(): P
         useParallelConnections = settings.useParallelConnections,
         parallelConnectionCount = settings.parallelConnectionCount,
         parallelChunkSizeKb = settings.parallelChunkSizeKb,
-        enableHttp2 = settings.enableHttp2,
+        enableHttp2 = false,
         nuvioPerformanceModeEnabled = settings.nuvioPerformanceModeEnabled,
         streamAutoPlayMode = settings.streamAutoPlayMode.name,
         streamAutoPlaySource = settings.streamAutoPlaySource.name,
