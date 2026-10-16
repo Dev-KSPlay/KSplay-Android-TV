@@ -1413,9 +1413,11 @@ fun PlayerRuntimeController.onEvent(event: PlayerEvent) {
             } else {
                 _exoPlayer?.let { player ->
                     player.setPlaybackSpeed(event.speed)
-                    player.trackSelectionParameters = player.trackSelectionParameters
-                        .buildUpon()
-                        .build()
+                    if (event.persist) {
+                        player.trackSelectionParameters = player.trackSelectionParameters
+                            .buildUpon()
+                            .build()
+                    }
                 }
             }
             _uiState.update {
@@ -1426,8 +1428,10 @@ fun PlayerRuntimeController.onEvent(event: PlayerEvent) {
                     showSubtitleDelayOverlay = false
                 )
             }
-            contentId?.takeIf { it.isNotBlank() }?.let { id ->
-                scope.launch { trackPreferenceDataStore.savePlaybackSpeed(id, event.speed) }
+            if (event.persist) {
+                contentId?.takeIf { it.isNotBlank() }?.let { id ->
+                    scope.launch { trackPreferenceDataStore.savePlaybackSpeed(id, event.speed) }
+                }
             }
         }
         PlayerEvent.OnToggleControls -> {
