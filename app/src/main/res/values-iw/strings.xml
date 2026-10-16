@@ -3347,7 +3347,7 @@
     <string name="stream_test_label_parallel1">חיבור מקבילי (מקטעי ‎1 MB)</string>
     <string name="stream_test_label_parallel4">חיבור מקבילי (מקטעי ‎4 MB)</string>
     <string name="stream_test_label_parallel8">חיבור מקבילי (מקטעי ‎8 MB)</string>
-    <string name="stream_test_label_parallel16">חיבור מקבילי (מקטעי 16 MB)</string>
+    <string name="stream_test_label_parallel16">חיבור מקבילי (מקטעי ‎16 MB)</string>
     <string name="stream_test_error_prefix">שגיאה: %1$s</string>
     <string name="stream_test_video_bitrate">קצב סיביות וידאו ממוצע: ‎%1$s</string>
     <string name="stream_test_error_connection">החיבור נכשל. ייתכן שקישור הסטרים האחרון שהופעל פג תוקף או שאינו נגיש. כדאי להפעיל את הווידאו שוב ולנסות שוב.</string>
