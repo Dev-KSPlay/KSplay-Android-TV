@@ -4,9 +4,7 @@ package com.nuvio.tv.ui.screens.player
 
 import android.text.BidiFormatter
 import android.text.SpannableStringBuilder
-import android.text.Spanned
 import android.text.TextDirectionHeuristics
-import android.util.Log
 import androidx.media3.common.C
 import androidx.media3.common.text.Cue
 import androidx.media3.extractor.text.CuesWithTiming
@@ -19,8 +17,6 @@ import androidx.media3.extractor.text.CuesWithTiming
  * Non-RTL cues are left untouched.
  */
 internal object PlayerSubtitleRtlFix {
-
-    private const val TAG = "PlayerSubtitleRtlFix"
 
     fun fixCueText(cue: Cue): Cue {
         val text = cue.text ?: return cue
@@ -92,61 +88,48 @@ internal object PlayerSubtitleRtlFix {
      * Spans are restored with indices shifted by the inserted bidi marks.
      */
     fun wrapText(input: CharSequence): CharSequence {
-        val bidiFormatter = BidiFormatter.getInstance()
-        val spannedInput = input as? Spanned
-        val spans = spannedInput?.getSpans(0, input.length, Any::class.java)
-        val spanStarts = spans?.let { IntArray(it.size) { -1 } }
-        val spanEnds = spans?.let { IntArray(it.size) { -1 } }
+        val bidiFormatter = BidiFormatter.getInstance(false)
+        val wrapped = SpannableStringBuilder(input)
 
-        val raw = input.toString()
-        val useCrlf = raw.contains("\r\n")
-        val lines = if (useCrlf) raw.split("\r\n") else raw.split("\n")
-        val eolLength = if (useCrlf) 2 else 1
+        val lines = input.toString().split('\n')
 
-        val wrappedLines = ArrayList<String>(lines.size)
-        var spanUpdate = 0
-        var lineStart = 0
-        for (line in lines) {
-            // unicodeWrap adds two characters or none.
-            val wrappedLine = bidiFormatter.unicodeWrap(line, TextDirectionHeuristics.LTR)
-            if (spans != null && spanStarts != null && spanEnds != null && spannedInput != null) {
-                val diff = wrappedLine.length - line.length
-                if (diff > 0) spanUpdate++
-                for (j in spans.indices) {
-                    val spanStart = spannedInput.getSpanStart(spans[j])
-                    if (spanStarts[j] < 0 &&
-                        spanStart >= lineStart &&
-                        spanStart < lineStart + line.length
-                    ) {
-                        spanStarts[j] = spanUpdate
-                    }
-                    val spanEnd = spannedInput.getSpanEnd(spans[j]) - 1
-                    if (spanEnds[j] < 0 &&
-                        spanEnd >= lineStart &&
-                        spanEnd < lineStart + line.length
-                    ) {
-                        spanEnds[j] = spanUpdate
-                    }
-                }
-                lineStart += line.length + eolLength
-                if (diff > 0) spanUpdate++
+        var lineEnd = input.length
+        for (i in lines.size - 1 downTo 0) {
+            var line = lines[i]
+            val hasCr = line.endsWith('\r')
+            if (hasCr) {
+                line = line.substring(0, line.length - 1)
             }
-            wrappedLines.add(wrappedLine)
-        }
+            val lineLength = line.length
+            val lineStart = lineEnd - lineLength - (if (hasCr) 1 else 0)
 
-        val wrapped = SpannableStringBuilder(wrappedLines.joinToString("\n"))
-        if (spans != null && spanStarts != null && spanEnds != null && spannedInput != null) {
-            for (i in spans.indices) {
-                val start = spannedInput.getSpanStart(spans[i]) + spanStarts[i]
-                val end = spannedInput.getSpanEnd(spans[i]) + spanEnds[i]
-                val flags = spannedInput.getSpanFlags(spans[i])
-                if (start >= 0 && start < wrapped.length && end >= 0 && end <= wrapped.length) {
-                    wrapped.setSpan(spans[i], start, end, flags)
+            if (hasCr) {
+                wrapped.delete(lineStart + lineLength, lineStart + lineLength + 1)
+            }
+
+            val wrappedLine = bidiFormatter.unicodeWrap(line, TextDirectionHeuristics.FIRSTSTRONG_LTR)
+            val diff = wrappedLine.length - lineLength
+            if (diff > 0) {
+                val prefixLength = if (diff == 1) {
+                    if (wrappedLine.startsWith(line)) 0 else 1
                 } else {
-                    Log.w(TAG, "Span out of bounds: start=$start,end=$end,len=${wrapped.length}")
+                    diff / 2
+                }
+                if (prefixLength + lineLength < wrappedLine.length) {
+                    wrapped.insert(
+                        lineStart + lineLength,
+                        wrappedLine.subSequence(prefixLength + lineLength, wrappedLine.length)
+                    )
+                }
+                if (prefixLength > 0) {
+                    wrapped.insert(lineStart, wrappedLine.subSequence(0, prefixLength))
                 }
             }
+            if (i > 0) {
+                lineEnd = lineStart - 1
+            }
         }
+
         return wrapped
     }
 
