@@ -81,6 +81,7 @@ fun SynopsisDescription(
     var isTruncated by rememberSaveable(description, maxLines) { mutableStateOf(false) }
     val interactionSource = remember { MutableInteractionSource() }
     val highlightInset = 12.dp
+    val readMoreDescription = stringResource(R.string.hero_synopsis_read_more)
 
     LaunchedEffect(isTruncated) {
         onTruncationChanged(isTruncated)
@@ -125,7 +126,7 @@ fun SynopsisDescription(
                         indication = null,
                         onClick = onShowFullDescription
                     )
-                    .semantics { role = Role.Button; contentDescription = stringResource(R.string.hero_synopsis_read_more) }
+                    .semantics { role = Role.Button; contentDescription = readMoreDescription }
                     .padding(horizontal = highlightInset, vertical = 8.dp)
             } else {
                 Modifier
