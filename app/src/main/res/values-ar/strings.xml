@@ -719,7 +719,7 @@
     <string name="cache_duration_hour_other">%1$d ساعات</string>
     <string name="cache_duration_day_one">%1$d يوم</string>
     <string name="cache_duration_day_other">%1$d أيام</string>
-    <string name="cache_duration_days_hours">%1$dd %2$dh</string>
+    <string name="cache_duration_days_hours">‎%1$dd %2$dh</string>
     <string name="autoplay_mode_manual">يدوي (اختيار المصدر)</string>
     <string name="autoplay_mode_first">تشغيل أول مصدر تلقائياً</string>
     <string name="autoplay_mode_regex">تشغيل تلقائي عند مطابقة Regex</string>
