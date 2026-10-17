@@ -68,5 +68,12 @@ internal fun MdbListSyncSnapshot.applyScrobble(receipt: MdbListScrobbleReceipt):
         episodeTmdbId = target.episodeTmdbId,
         episodeTvdbId = target.episodeTvdbId
     )
+    if (!receipt.isWatched) {
+        val index = MdbListMediaIndex(this)
+        val normalizedPlayback = playback.map { it.copy(media = index.resolve(it.type, it.media.ids)) }
+            .groupBy { it.id?.let { id -> "id:$id" } ?: "${it.type}:${it.media.ids.key}:${it.season}:${it.episode}" }
+            .map { (_, records) -> records.maxBy { mdbListTimestamp(it.updatedAt) } }
+        return copy(watched = this.watched, playback = normalizedPlayback)
+    }
     return copy(watched = watched, playback = playback).normalizeMedia()
 }
