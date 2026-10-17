@@ -43,6 +43,7 @@ import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 import java.lang.annotation.Target;
 import java.util.ArrayList;
+import java.util.Arrays;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 
 /**
@@ -77,6 +78,15 @@ public final class AviExtractor implements Extractor {
   public static final int FOURCC_JUNK = 0x4b4e554a;
 
   @SuppressWarnings("ConstantCaseForConstants")
+  public static final int FOURCC_indx = 0x78646e69;
+
+  @SuppressWarnings("ConstantCaseForConstants")
+  public static final int FOURCC_odml = 0x6c6d646f;
+
+  @SuppressWarnings("ConstantCaseForConstants")
+  public static final int FOURCC_dmlh = 0x686c6d64;
+
+  @SuppressWarnings("ConstantCaseForConstants")
   public static final int FOURCC_strf = 0x66727473;
 
   @SuppressWarnings("ConstantCaseForConstants")
@@ -106,6 +116,8 @@ public final class AviExtractor implements Extractor {
     STATE_FINDING_IDX1_HEADER,
     STATE_READING_IDX1_BODY,
     STATE_READING_SAMPLES,
+    STATE_READING_STANDARD_INDEX_HEADER,
+    STATE_READING_STANDARD_INDEX_BODY,
   })
   private @interface State {}
 
@@ -116,8 +128,25 @@ public final class AviExtractor implements Extractor {
   private static final int STATE_FINDING_IDX1_HEADER = 4;
   private static final int STATE_READING_IDX1_BODY = 5;
   private static final int STATE_READING_SAMPLES = 6;
+  private static final int STATE_READING_STANDARD_INDEX_HEADER = 7;
+  private static final int STATE_READING_STANDARD_INDEX_BODY = 8;
 
   private static final int AVIIF_KEYFRAME = 16;
+  private static final int AVI_INDEX_OF_CHUNKS = 1;
+  private static final int STANDARD_INDEX_HEADER_BYTES = 24;
+  private static final int MAX_STANDARD_INDEX_BYTES = 16 * 1024 * 1024;
+  private static final long MAX_HEADER_LIST_SEARCH_BYTES = 1024 * 1024;
+  private static final long NON_KEY_FRAME_SIZE_BIT = 0x80000000L;
+
+  /** Receives the chunk index the reader uses, from idx1 or from the OpenDML indexes. */
+  public interface IndexListener {
+
+    /**
+     * Called once with the first {@code count} entries of each array: the chunk id, the AVIIF
+     * flags, the file position of the chunk header and the size of the chunk data.
+     */
+    void onIndex(int[] chunkIds, int[] flags, long[] chunkPositions, int[] sizes, int count);
+  }
 
   /**
    * Flags controlling the behavior of the extractor. Possible flag value is {@link
@@ -161,6 +190,12 @@ public final class AviExtractor implements Extractor {
   private long moviEnd;
   private int idx1BodySize;
   private boolean seekMapHasBeenOutput;
+  private boolean followsRiffSegments;
+  private long[] standardIndexPositions;
+  private int nextStandardIndex;
+  private int standardIndexBodySize;
+  private final IndexEntries indexEntries;
+  @Nullable private IndexListener indexListener;
 
   /**
    * @deprecated Use {@link #AviExtractor(int, SubtitleParser.Factory)} instead.
@@ -184,10 +219,16 @@ public final class AviExtractor implements Extractor {
     chunkHeaderHolder = new ChunkHeaderHolder();
     extractorOutput = new NoOpExtractorOutput();
     chunkReaders = new ChunkReader[0];
+    standardIndexPositions = new long[0];
+    indexEntries = new IndexEntries();
     moviStart = C.INDEX_UNSET;
     moviEnd = C.INDEX_UNSET;
     hdrlSize = C.LENGTH_UNSET;
     durationUs = C.TIME_UNSET;
+  }
+
+  public void setIndexListener(@Nullable IndexListener indexListener) {
+    this.indexListener = indexListener;
   }
 
   // Extractor implementation.
@@ -231,14 +272,25 @@ public final class AviExtractor implements Extractor {
         state = STATE_READING_HDRL_HEADER;
         return RESULT_CONTINUE;
       case STATE_READING_HDRL_HEADER:
-        input.readFully(scratch.getData(), /* offset= */ 0, /* length= */ 12);
+        input.peekFully(scratch.getData(), /* offset= */ 0, /* length= */ 12);
+        input.resetPeekPosition();
         scratch.setPosition(0);
-        chunkHeaderHolder.populateWithListHeaderFrom(scratch);
-        if (chunkHeaderHolder.listType != FOURCC_hdrl) {
-          throw ParserException.createForMalformedContainer(
-              /* message= */ "hdrl expected, found: " + chunkHeaderHolder.listType,
-              /* cause= */ null);
+        chunkHeaderHolder.populateFrom(scratch);
+        chunkHeaderHolder.listType = scratch.readLittleEndianInt();
+        if (chunkHeaderHolder.chunkType != FOURCC_LIST
+            || chunkHeaderHolder.listType != FOURCC_hdrl) {
+          // Some muxers write a JUNK chunk between the RIFF header and the header list.
+          long size = chunkHeaderHolder.size & 0xFFFFFFFFL;
+          long next = input.getPosition() + 8 + size + (size & 1);
+          if (next > MAX_HEADER_LIST_SEARCH_BYTES) {
+            throw ParserException.createForMalformedContainer(
+                /* message= */ "hdrl expected, found: " + chunkHeaderHolder.listType,
+                /* cause= */ null);
+          }
+          pendingReposition = next;
+          return RESULT_CONTINUE;
         }
+        input.skipFully(12);
         hdrlSize = chunkHeaderHolder.size;
         state = STATE_READING_HDRL_BODY;
         return RESULT_CONTINUE;
@@ -275,6 +327,12 @@ public final class AviExtractor implements Extractor {
         // Size includes the list type, but not the LIST or size fields, so we add 8.
         moviEnd = moviStart + chunkHeaderHolder.size + 8;
         if (!seekMapHasBeenOutput) {
+          if (standardIndexPositions.length > 0) {
+            nextStandardIndex = 0;
+            state = STATE_READING_STANDARD_INDEX_HEADER;
+            pendingReposition = standardIndexPositions[0];
+            return RESULT_CONTINUE;
+          }
           if (Assertions.checkNotNull(aviHeader).hasIndex()) {
             state = STATE_FINDING_IDX1_HEADER;
             pendingReposition = moviEnd;
@@ -308,6 +366,36 @@ public final class AviExtractor implements Extractor {
         parseIdx1Body(idx1Body);
         state = STATE_READING_SAMPLES;
         pendingReposition = moviStart;
+        return RESULT_CONTINUE;
+      case STATE_READING_STANDARD_INDEX_HEADER:
+        input.readFully(scratch.getData(), /* offset= */ 0, /* length= */ 8);
+        scratch.setPosition(4);
+        long standardIndexSize = scratch.readLittleEndianUnsignedInt();
+        if (standardIndexSize < STANDARD_INDEX_HEADER_BYTES
+            || standardIndexSize > MAX_STANDARD_INDEX_BYTES) {
+          useLegacyIndex();
+          return RESULT_CONTINUE;
+        }
+        standardIndexBodySize = (int) standardIndexSize;
+        state = STATE_READING_STANDARD_INDEX_BODY;
+        return RESULT_CONTINUE;
+      case STATE_READING_STANDARD_INDEX_BODY:
+        ParsableByteArray standardIndexBody = new ParsableByteArray(standardIndexBodySize);
+        input.readFully(
+            standardIndexBody.getData(), /* offset= */ 0, /* length= */ standardIndexBodySize);
+        if (!parseStandardIndex(standardIndexBody)) {
+          useLegacyIndex();
+          return RESULT_CONTINUE;
+        }
+        nextStandardIndex++;
+        if (nextStandardIndex < standardIndexPositions.length) {
+          state = STATE_READING_STANDARD_INDEX_HEADER;
+          pendingReposition = standardIndexPositions[nextStandardIndex];
+        } else {
+          commitIndex(/* sortByPosition= */ true);
+          state = STATE_READING_SAMPLES;
+          pendingReposition = moviStart;
+        }
         return RESULT_CONTINUE;
       case STATE_READING_SAMPLES:
         return readMoviChunks(input);
@@ -379,9 +467,24 @@ public final class AviExtractor implements Extractor {
           /* message= */ "AviHeader not found", /* cause= */ null);
     }
     this.aviHeader = aviHeader;
+    long totalFrames = aviHeader.totalFrames & 0xFFFFFFFFL;
+    for (AviChunk aviChunk : headerList.children) {
+      if (aviChunk.getType() == FOURCC_odml) {
+        // OpenDML: the movie goes on in further RIFF AVIX segments after the first one.
+        followsRiffSegments = true;
+        @Nullable
+        OpenDmlHeaderChunk openDmlHeader =
+            ((ListChunk) aviChunk).getChild(OpenDmlHeaderChunk.class);
+        if (openDmlHeader != null) {
+          totalFrames = max(totalFrames, openDmlHeader.totalFrames);
+        }
+      }
+    }
     // This is usually wrong, so it will be overwritten by video if present
-    durationUs = aviHeader.totalFrames * (long) aviHeader.frameDurationUs;
+    durationUs = totalFrames * aviHeader.frameDurationUs;
     ArrayList<ChunkReader> chunkReaderList = new ArrayList<>();
+    ArrayList<SuperIndexChunk> superIndexes = new ArrayList<>();
+    boolean everyStreamHasSuperIndex = true;
     int streamId = 0;
     for (AviChunk aviChunk : headerList.children) {
       if (aviChunk.getType() == FOURCC_strl) {
@@ -392,32 +495,115 @@ public final class AviExtractor implements Extractor {
         @Nullable ChunkReader chunkReader = processStreamList(streamList, streamId++);
         if (chunkReader != null) {
           chunkReaderList.add(chunkReader);
+          @Nullable SuperIndexChunk superIndex = streamList.getChild(SuperIndexChunk.class);
+          if (superIndex == null) {
+            everyStreamHasSuperIndex = false;
+          } else {
+            superIndexes.add(superIndex);
+          }
         }
       }
     }
     chunkReaders = chunkReaderList.toArray(new ChunkReader[0]);
+    if (everyStreamHasSuperIndex && !superIndexes.isEmpty()) {
+      followsRiffSegments = true;
+      int count = 0;
+      for (SuperIndexChunk superIndex : superIndexes) {
+        count += superIndex.indexOffsets.length;
+      }
+      standardIndexPositions = new long[count];
+      int at = 0;
+      for (SuperIndexChunk superIndex : superIndexes) {
+        for (long offset : superIndex.indexOffsets) {
+          standardIndexPositions[at++] = offset;
+        }
+      }
+      Arrays.sort(standardIndexPositions);
+    }
     extractorOutput.endTracks();
   }
 
   /** Builds and outputs the {@link SeekMap} from the idx1 chunk. */
   private void parseIdx1Body(ParsableByteArray body) {
     long seekOffset = peekSeekOffset(body);
+    indexEntries.clear();
     while (body.bytesLeft() >= 16) {
       int chunkId = body.readLittleEndianInt();
       int flags = body.readLittleEndianInt();
-      long offset = body.readLittleEndianInt() + seekOffset;
-      body.skipBytes(4); // Ignore size.
-      ChunkReader chunkReader = getChunkReader(chunkId);
+      long offset = body.readLittleEndianUnsignedInt() + seekOffset;
+      int size = body.readLittleEndianInt();
+      indexEntries.add(chunkId, flags, offset, size);
+    }
+    commitIndex(/* sortByPosition= */ false);
+  }
+
+  /** Adds the entries of an OpenDML standard index ('ix##'); false when it cannot be read. */
+  private boolean parseStandardIndex(ParsableByteArray body) {
+    int longsPerEntry = body.readLittleEndianUnsignedShort();
+    body.skipBytes(1); // bIndexSubType.
+    int indexType = body.readUnsignedByte();
+    long entriesInUse = body.readLittleEndianUnsignedInt();
+    int chunkId = body.readLittleEndianInt();
+    long baseOffset = body.readLittleEndianLong();
+    body.skipBytes(4); // dwReserved.
+    if (indexType != AVI_INDEX_OF_CHUNKS || longsPerEntry != 2 || baseOffset < 0) {
+      return false;
+    }
+    long count = Math.min(entriesInUse, body.bytesLeft() / 8);
+    for (long i = 0; i < count; i++) {
+      // The offset points at the chunk data, after the 8 byte chunk header.
+      long dataOffset = body.readLittleEndianUnsignedInt();
+      long size = body.readLittleEndianUnsignedInt();
+      int flags = (size & NON_KEY_FRAME_SIZE_BIT) == 0 ? AVIIF_KEYFRAME : 0;
+      indexEntries.add(
+          chunkId, flags, baseOffset + dataOffset - 8, (int) (size & ~NON_KEY_FRAME_SIZE_BIT));
+    }
+    return true;
+  }
+
+  /** Falls back to idx1 when the OpenDML indexes cannot be read. */
+  private void useLegacyIndex() {
+    Log.w(TAG, "OpenDML index unreadable, using idx1");
+    standardIndexPositions = new long[0];
+    indexEntries.clear();
+    if (Assertions.checkNotNull(aviHeader).hasIndex()) {
+      state = STATE_FINDING_IDX1_HEADER;
+      pendingReposition = moviEnd;
+    } else {
+      extractorOutput.seekMap(new SeekMap.Unseekable(durationUs));
+      seekMapHasBeenOutput = true;
+      state = STATE_READING_SAMPLES;
+      pendingReposition = moviStart;
+    }
+  }
+
+  /** Hands the collected index to the chunk readers and outputs the {@link SeekMap}. */
+  private void commitIndex(boolean sortByPosition) {
+    if (sortByPosition) {
+      indexEntries.sortByPosition();
+    }
+    for (int i = 0; i < indexEntries.count; i++) {
+      ChunkReader chunkReader = getChunkReader(indexEntries.chunkIds[i]);
       if (chunkReader == null) {
         // We ignore unknown chunk IDs.
         continue;
       }
       chunkReader.appendIndexChunk(
-          offset, /* isKeyFrame= */ (flags & AVIIF_KEYFRAME) == AVIIF_KEYFRAME);
+          indexEntries.positions[i],
+          /* isKeyFrame= */ (indexEntries.flags[i] & AVIIF_KEYFRAME) == AVIIF_KEYFRAME);
     }
     for (ChunkReader chunkReader : chunkReaders) {
       chunkReader.commitIndex();
     }
+    if (indexListener != null) {
+      indexListener.onIndex(
+          indexEntries.chunkIds,
+          indexEntries.flags,
+          indexEntries.positions,
+          indexEntries.sizes,
+          indexEntries.count);
+    }
+    indexEntries.release();
     seekMapHasBeenOutput = true;
     if (chunkReaders.length == 0) {
       extractorOutput.seekMap(new SeekMap.Unseekable(durationUs));
@@ -457,21 +643,23 @@ public final class AviExtractor implements Extractor {
   }
 
   private int readMoviChunks(ExtractorInput input) throws IOException {
-    if (input.getPosition() >= moviEnd) {
+    if (!followsRiffSegments && input.getPosition() >= moviEnd) {
       return C.RESULT_END_OF_INPUT;
     } else if (currentChunkReader != null) {
       if (currentChunkReader.onChunkData(input)) {
         currentChunkReader = null;
       }
     } else {
-      alignInputToEvenPosition(input);
-      input.peekFully(scratch.getData(), /* offset= */ 0, 12);
+      if (!alignInputToEvenPosition(input)
+          || !input.peekFully(scratch.getData(), /* offset= */ 0, 8, /* allowEndOfInput= */ true)) {
+        return C.RESULT_END_OF_INPUT;
+      }
       scratch.setPosition(0);
       int chunkType = scratch.readLittleEndianInt();
-      if (chunkType == FOURCC_LIST) {
-        scratch.setPosition(8);
-        int listType = scratch.readLittleEndianInt();
-        input.skipFully(listType == FOURCC_movi ? 12 : 8);
+      if (chunkType == FOURCC_LIST || (followsRiffSegments && chunkType == FOURCC_RIFF)) {
+        // Step into the list (movi, or 'rec ' groups of interleaved chunks) past its type. A RIFF
+        // AVIX segment holds the next movi list.
+        input.skipFully(12);
         input.resetPeekPosition();
         return RESULT_CONTINUE;
       }
@@ -538,10 +726,11 @@ public final class AviExtractor implements Extractor {
    * <p>This isn't documented anywhere, but AVI files are aligned to even bytes and fill gaps with
    * zeros.
    */
-  private static void alignInputToEvenPosition(ExtractorInput input) throws IOException {
+  private static boolean alignInputToEvenPosition(ExtractorInput input) throws IOException {
     if ((input.getPosition() & 1) == 1) {
-      input.skipFully(1);
+      return input.skipFully(1, /* allowEndOfInput= */ true);
     }
+    return true;
   }
 
   // Internal classes.
@@ -574,6 +763,72 @@ public final class AviExtractor implements Extractor {
         }
       }
       return result;
+    }
+  }
+
+  /** Index entries in growable arrays, as read from idx1 or from the OpenDML indexes. */
+  private static final class IndexEntries {
+    private static final int INITIAL_CAPACITY = 1024;
+    private static final int INDEX_BITS = 22;
+
+    public int[] chunkIds = new int[0];
+    public int[] flags = new int[0];
+    public long[] positions = new long[0];
+    public int[] sizes = new int[0];
+    public int count;
+
+    public void add(int chunkId, int flag, long position, int size) {
+      if (count == positions.length) {
+        int capacity = max(INITIAL_CAPACITY, count * 2);
+        chunkIds = Arrays.copyOf(chunkIds, capacity);
+        flags = Arrays.copyOf(flags, capacity);
+        positions = Arrays.copyOf(positions, capacity);
+        sizes = Arrays.copyOf(sizes, capacity);
+      }
+      chunkIds[count] = chunkId;
+      flags[count] = flag;
+      positions[count] = position;
+      sizes[count] = size;
+      count++;
+    }
+
+    public void clear() {
+      count = 0;
+    }
+
+    public void release() {
+      chunkIds = new int[0];
+      flags = new int[0];
+      positions = new long[0];
+      sizes = new int[0];
+      count = 0;
+    }
+
+    /** Puts the entries in file order: each standard index lists one stream of one segment. */
+    public void sortByPosition() {
+      if (count >= 1 << INDEX_BITS) {
+        return;
+      }
+      long[] keys = new long[count];
+      for (int i = 0; i < count; i++) {
+        keys[i] = (positions[i] << INDEX_BITS) | i;
+      }
+      Arrays.sort(keys);
+      int[] sortedChunkIds = new int[count];
+      int[] sortedFlags = new int[count];
+      long[] sortedPositions = new long[count];
+      int[] sortedSizes = new int[count];
+      for (int i = 0; i < count; i++) {
+        int from = (int) (keys[i] & ((1 << INDEX_BITS) - 1));
+        sortedChunkIds[i] = chunkIds[from];
+        sortedFlags[i] = flags[from];
+        sortedPositions[i] = positions[from];
+        sortedSizes[i] = sizes[from];
+      }
+      chunkIds = sortedChunkIds;
+      flags = sortedFlags;
+      positions = sortedPositions;
+      sizes = sortedSizes;
     }
   }
 
