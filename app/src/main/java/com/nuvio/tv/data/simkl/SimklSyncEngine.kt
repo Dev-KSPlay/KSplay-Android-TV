@@ -1,13 +1,21 @@
 package com.nuvio.tv.data.simkl
 
+import com.nuvio.tv.data.local.TraktSettingsDataStore
 import javax.inject.Inject
+import kotlinx.coroutines.flow.first
 
 class SimklSyncEngine internal constructor(
     private val remote: SimklSyncRemote,
+    private val settingsDataStore: TraktSettingsDataStore,
+    private val authStorage: SimklAuthStorage,
     private val nowEpochMs: () -> Long
 ) {
     @Inject
-    constructor(remote: SimklSyncRemote) : this(remote, System::currentTimeMillis)
+    constructor(
+        remote: SimklSyncRemote,
+        settingsDataStore: TraktSettingsDataStore,
+        authStorage: SimklAuthStorage
+    ) : this(remote, settingsDataStore, authStorage, System::currentTimeMillis)
 
     suspend fun synchronize(current: SimklSyncSnapshot): SimklSyncSnapshot {
         if (!current.isInitialized) return initialSync()
@@ -38,11 +46,14 @@ class SimklSyncEngine internal constructor(
             current.playback
         }
         val now = nowEpochMs()
+        val rewatch = readRewatchRuns(current)
         return current.copy(
             watermark = activities.all,
             activities = activities,
             entries = entries,
             playback = playback,
+            rewatchRuns = rewatch.runs,
+            rewatchSessions = rewatch.sessions,
             lastSyncedAtEpochMs = now,
             lastCheckedAtEpochMs = now
         ).reconcileWatchedPlayback()
@@ -57,15 +68,60 @@ class SimklSyncEngine internal constructor(
         val playback = remote.fetchPlayback()
         val activities = remote.fetchActivities()
         val now = nowEpochMs()
+        val rewatch = readRewatchRuns(current = null)
         return SimklSyncSnapshot(
             isInitialized = true,
             watermark = activities.all,
             activities = activities,
             entries = entries.distinctBy(SimklLibraryEntry::stableKey),
             playback = playback,
+            rewatchRuns = rewatch.runs,
+            rewatchSessions = rewatch.sessions,
             lastSyncedAtEpochMs = now,
             lastCheckedAtEpochMs = now
         ).reconcileWatchedPlayback()
+    }
+
+    /**
+     * Reads the rewatch sessions of the account, keeps them, and turns them into runs.
+     *
+     * While rewatches cannot be recorded the read is skipped: the sessions would matter to nothing,
+     * and pulling the whole show library on every sync for a user who never turns the feature on is
+     * not worth it. A skipped read drops the runs the snapshot still carries only when the reason is
+     * known and final: the mode is off, or the plan has loaded and cannot hold sessions. A plan that
+     * has not loaded yet keeps them, so starting the app does not blank the row. A failed read keeps
+     * what the previous sync found: losing the network must not empty the Continue Watching cards the
+     * user is looking at.
+     */
+    private suspend fun readRewatchRuns(current: SimklSyncSnapshot?): SimklRewatchRead {
+        val mode = settingsDataStore.simklRewatchMode.first()
+        val accountType = authStorage.state.value.accountType
+        if (mode == SimklRewatchMode.OFF || !isSimklRewatchPlanEligible(accountType)) {
+            val knownToHoldNoSessions = mode == SimklRewatchMode.OFF || accountType != null
+            return if (knownToHoldNoSessions) {
+                SimklRewatchRead(runs = emptyList(), sessions = emptyList())
+            } else {
+                SimklRewatchRead(
+                    runs = current?.rewatchRuns.orEmpty(),
+                    sessions = current?.rewatchSessions.orEmpty()
+                )
+            }
+        }
+        return runCatching {
+            val sessions = remote.fetchRewatchSessions().runningRewatchSessions()
+            SimklRewatchRead(
+                runs = deriveSimklRewatchRuns(
+                    entries = sessions,
+                    offerRuns = true
+                ),
+                sessions = sessions
+            )
+        }.getOrElse {
+            SimklRewatchRead(
+                runs = current?.rewatchRuns.orEmpty(),
+                sessions = current?.rewatchSessions.orEmpty()
+            )
+        }
     }
 }
 

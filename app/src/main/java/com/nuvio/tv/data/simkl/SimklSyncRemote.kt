@@ -24,6 +24,13 @@ interface SimklSyncRemote {
     suspend fun fetchActivities(): SimklActivities
     suspend fun fetchAllItems(request: SimklAllItemsRequest): SimklAllItemsResponse
     suspend fun fetchPlayback(): List<SimklPlaybackSession>
+
+    /**
+     * The account's rewatch sessions, for every type a run can come from. This is a separate read
+     * on purpose: a session comes back as a sidecar row with the same show as the canonical row, so
+     * feeding it into [fetchAllItems] would let rewatch progress replace the canonical watch position.
+     */
+    suspend fun fetchRewatchSessions(): List<SimklLibraryEntry>
 }
 
 class SimklApiSyncRemote @Inject constructor(
@@ -64,6 +71,22 @@ class SimklApiSyncRemote @Inject constructor(
         SimklApiRequest(SimklHttpMethod.GET, "/sync/playback")
     ).body.decode()
 
+    override suspend fun fetchRewatchSessions(): List<SimklLibraryEntry> =
+        REWATCH_SESSION_TYPES.flatMap { type -> fetchRewatchSessions(type) }
+
+    private suspend fun fetchRewatchSessions(type: SimklMediaType): List<SimklLibraryEntry> = client.execute(
+        SimklApiRequest(
+            SimklHttpMethod.GET,
+            "/sync/all-items/${type.apiValue}",
+            mapOf(
+                "extended" to "full",
+                "allow_rewatch" to "yes",
+                "episode_watched_at" to "yes",
+                "language" to "en"
+            )
+        )
+    ).body.decodeAllItems().entriesFor(type)
+
     private inline fun <reified T> String.decode(): T = json.decodeFromString(this)
 
     private fun String.decodeAllItems(): SimklAllItemsResponse {
@@ -75,3 +98,14 @@ class SimklApiSyncRemote @Inject constructor(
         }
     }
 }
+
+/**
+ * The types a rewatch session can come from: shows and anime. Anime is its own type in the API, so
+ * reading shows alone left an anime rewatch the account holds without a run here. A movie session
+ * carries no episodes, so it never becomes a run, and reading the movies library would be a whole
+ * library call for nothing.
+ */
+private val REWATCH_SESSION_TYPES = listOf(
+    SimklMediaType.SHOWS,
+    SimklMediaType.ANIME
+)
