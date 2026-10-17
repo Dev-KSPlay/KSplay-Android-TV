@@ -26,7 +26,7 @@ interface SimklSyncRemote {
     suspend fun fetchPlayback(): List<SimklPlaybackSession>
 
     /**
-     * The account's rewatch sessions, for every type a session can belong to. This is a separate read
+     * The account's rewatch sessions, for every type a run can come from. This is a separate read
      * on purpose: a session comes back as a sidecar row with the same show as the canonical row, so
      * feeding it into [fetchAllItems] would let rewatch progress replace the canonical watch position.
      */
@@ -100,11 +100,12 @@ class SimklApiSyncRemote @Inject constructor(
 }
 
 /**
- * The types a rewatch session can belong to. Anime and movies are separate types in the API, so
- * reading shows alone left a rewatch the account holds for either of them without a run here.
+ * The types a rewatch session can come from: shows and anime. Anime is its own type in the API, so
+ * reading shows alone left an anime rewatch the account holds without a run here. A movie session
+ * carries no episodes, so it never becomes a run, and reading the movies library would be a whole
+ * library call for nothing.
  */
 private val REWATCH_SESSION_TYPES = listOf(
     SimklMediaType.SHOWS,
-    SimklMediaType.MOVIES,
     SimklMediaType.ANIME
 )
