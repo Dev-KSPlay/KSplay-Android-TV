@@ -530,7 +530,7 @@ fun CatalogRowSection(
                             ) {
                                 Icon(
                                     imageVector = Icons.AutoMirrored.Filled.ArrowForward,
-                                    contentDescription = seeAllLabel ?: stringResource(R.string.action_see_all),
+                                    contentDescription = null,
                                     modifier = Modifier.size(NuvioTheme.spacing.xxl),
                                     tint = NuvioTheme.colors.TextSecondary
                                 )

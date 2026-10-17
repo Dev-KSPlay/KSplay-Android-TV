@@ -503,7 +503,7 @@ private fun CastMemberItem(
                 if (photoModel != null) {
                     AsyncImage(
                         model = photoModel,
-                        contentDescription = member.name,
+                        contentDescription = null,
                         modifier = Modifier.fillMaxSize(),
                         contentScale = ContentScale.Crop,
                         placeholder = bgPainter,

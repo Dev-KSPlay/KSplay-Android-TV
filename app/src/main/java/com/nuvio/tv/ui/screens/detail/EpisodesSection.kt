@@ -897,7 +897,7 @@ private fun EpisodeCard(
             val bgPainter = remember(cardBgColor) { androidx.compose.ui.graphics.painter.ColorPainter(cardBgColor) }
             AsyncImage(
                 model = thumbnailRequest,
-                contentDescription = episode.title.localizeEpisodeTitle(context),
+                contentDescription = null,
                 modifier = Modifier
                     .fillMaxSize()
                     .graphicsLayer {
