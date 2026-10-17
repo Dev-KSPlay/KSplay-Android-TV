@@ -4,6 +4,7 @@ import androidx.compose.runtime.Immutable
 import com.nuvio.tv.core.debrid.DebridProviders
 import com.nuvio.tv.data.mediaserver.ServerPlaybackTarget
 import kotlin.math.roundToInt
+import kotlinx.serialization.Serializable
 
 /**
  * Represents a stream source from a Stremio addon
@@ -166,6 +167,7 @@ data class Stream(
 }
 
 @Immutable
+@Serializable
 data class StreamBadge(
     val name: String,
     val imageURL: String = "",
