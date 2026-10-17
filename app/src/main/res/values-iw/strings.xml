@@ -3214,7 +3214,7 @@
     <!-- Playback — Buffer & Network settings -->
     <string name="playback_section_buffer_network">אגירת נתונים ורשת</string>
     <string name="playback_section_buffer_network_desc">כמה תוכן לשמור בזיכרון וכיצד למשוך מקורות.</string>
-    <string name="playback_net_device_memory_info">זיכרון המכשיר: %1$s | מגבלת בטיחות מומלצת: ‎%2$d MB</string>
+    <string name="playback_net_device_memory_info">זיכרון המכשיר: ‎%1$s | מגבלת בטיחות מומלצת: ‎%2$d MB</string>
     <string name="playback_net_nuvio_performance_mode">זיכרון מקורי של ExoPlayer</string>
     <string name="playback_net_nuvio_performance_mode_sub">הפעלת הקצאת זיכרון מקורית מחוץ לערימה ואופטימיזציות גלילה.</string>
     <string name="playback_net_nuvio_performance_mode_not_supported">תכונה זו אינה נתמכת במכשיר.</string>
@@ -3347,7 +3347,7 @@
     <string name="stream_test_label_parallel1">חיבור מקבילי (מקטעי ‎1 MB)</string>
     <string name="stream_test_label_parallel4">חיבור מקבילי (מקטעי ‎4 MB)</string>
     <string name="stream_test_label_parallel8">חיבור מקבילי (מקטעי ‎8 MB)</string>
-    <string name="stream_test_label_parallel16">חיבור מקבילי (מקטעי ‎16 MB)</string>
+    <string name="stream_test_label_parallel8">חיבור מקבילי (מקטעי ‎16 MB)</string>
     <string name="stream_test_error_prefix">שגיאה: %1$s</string>
     <string name="stream_test_video_bitrate">קצב סיביות וידאו ממוצע: ‎%1$s</string>
     <string name="stream_test_error_connection">החיבור נכשל. ייתכן שקישור הסטרים האחרון שהופעל פג תוקף או שאינו נגיש. כדאי להפעיל את הווידאו שוב ולנסות שוב.</string>
